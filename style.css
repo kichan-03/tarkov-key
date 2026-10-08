@@ -53,3 +53,25 @@
 @media(max-width:550px){.atlas{padding:12px!important}.atlas-heading{flex-direction:column;align-items:stretch;gap:13px}.atlas-actions select{max-width:none}.atlas-pane{padding:9px}.atlas-frame,.atlas-plot-wrap{height:255px}.atlas-pane-head{font-size:12px}.atlas-key{flex-direction:column;align-items:flex-start}.atlas-key small{white-space:normal}}
 /* Respect the hidden attribute even when component CSS specifies display:block. */
 .atlas-frame [hidden], .atlas-plot-wrap [hidden] {display:none!important}
+
+/* v0.6: coordinates over the SVGOverlay bounds used upstream by tarkov.dev. */
+.atlas-overlay-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:3px 0 10px;font-size:11px;color:var(--muted)}
+.atlas-overlay-controls label{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.atlas-overlay-controls input{accent-color:var(--gold);width:16px;height:16px}
+.atlas-overlay-controls select{background:var(--surface2);color:var(--ink);border:1px solid var(--border);border-radius:4px;padding:5px;max-width:115px;font-size:11px}
+.atlas-overlay-controls #atlas-pin-count{margin-left:auto;color:var(--gold);font-size:11px}
+.atlas-map-content{position:relative;min-width:100%;width:100%;margin:0;line-height:0;text-align:left}
+.atlas-frame .atlas-map-content img{display:block;width:100%;height:auto;max-width:none;min-width:0;margin:0}
+.atlas-map-content.calibrated{aspect-ratio:var(--map-ratio)}
+.atlas-frame .atlas-map-content.calibrated img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}
+.atlas-overlay{position:absolute;inset:0;pointer-events:none;overflow:visible}
+.atlas-overlay[hidden],.atlas-map-content[hidden]{display:none!important}
+.atlas-pin{pointer-events:auto;position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 3px;border-radius:50%;border:2px solid #f0d9a1;background:#26382d;color:#fff4d2;box-shadow:0 1px 6px #000a;font:bold 10px system-ui,sans-serif;z-index:1;cursor:pointer;transition:background .12s,transform .12s}
+.atlas-pin:hover,.atlas-pin:focus-visible{background:#997947;z-index:3;outline:2px solid white;outline-offset:1px;transform:translate(-50%,-50%) scale(1.25)}
+.atlas-pin.is-owned{background:#55735c;border-color:#b9e8ba;color:#fff}
+.atlas-pin.selected{background:#d8b55b;color:#151a15;border-color:#fff;z-index:4;box-shadow:0 0 0 4px #e2cb8c88}
+.atlas-pin.is-group{border-radius:8px;min-width:23px}
+.atlas-overlay-note-strong{color:var(--gold);font-weight:700}
+@media(max-width:550px){.atlas-overlay-controls{gap:7px}.atlas-overlay-controls #atlas-pin-count{flex-basis:100%;margin-left:0}.atlas-pin{min-width:18px;height:18px;font-size:9px}}
+
+.atlas-map-content img[hidden]{display:none!important}
