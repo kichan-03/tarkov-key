@@ -1,5 +1,5 @@
 'use strict';
-// Tarkov Key Guide v0.7.2. GitHub Pages, no account, no backend.
+// Tarkov Key Guide v0.7.3. GitHub Pages, no account, no backend.
 const API = 'https://api.tarkov.dev/graphql';
 const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // DO NOT CHANGE: existing users' checkmarks.
 const CACHE_KEY = 'tarkov-key-guide-items-v4'; // Cache format unchanged: preserve working 0.4 data
@@ -9,15 +9,14 @@ const queryKorean = `query { items(types:[keys],lang:ko) { id name shortName use
 // Lock has no room name in the public schema; avoid inventing a building or floor.
 const queryMaps = `query { maps { name normalizedName accessKeys { id } locks { key { id } lockType needsPower position { x y z } } } }`;
 const $ = id => document.getElementById(id);
-const labels = { 'Customs':'세관', 'Factory':'팩토리', 'Factory (Night)':'야간 팩토리', 'Woods':'우드', 'Shoreline':'해안선', 'Interchange':'인터체인지', 'Reserve':'리저브', 'Lighthouse':'등대', 'Streets of Tarkov':'스트리트', 'The Lab':'연구소', 'Ground Zero':'그라운드 제로', 'Terminal':'터미널', 'The Labyrinth':'미궁', 'Icebreaker':'아이스브레이커' };
-const mapLabels = {customs:'세관',factory:'팩토리','night-factory':'야간 팩토리',woods:'우드',shoreline:'해안선',interchange:'인터체인지',reserve:'리저브',lighthouse:'등대',streets:'스트리트','streets-of-tarkov':'스트리트',labs:'연구소','the-lab':'연구소','ground-zero':'그라운드 제로',terminal:'터미널','the-labyrinth':'미궁',icebreaker:'아이스브레이커'};
-const mapSlugs = {세관:'customs',팩토리:'factory','야간 팩토리':'factory',우드:'woods',해안선:'shoreline',인터체인지:'interchange',리저브:'reserve',등대:'lighthouse',스트리트:'streets',연구소:'labs','그라운드 제로':'ground-zero',터미널:'terminal',미궁:'the-labyrinth',아이스브레이커:'icebreaker'};
+const labels = { 'Customs':'세관', 'Factory':'팩토리', 'Factory (Night)':'팩토리', 'Woods':'우드', 'Shoreline':'해안선', 'Interchange':'인터체인지', 'Reserve':'리저브', 'Lighthouse':'등대', 'Streets of Tarkov':'스트리트', 'The Lab':'연구소', 'Ground Zero':'그라운드 제로', 'Terminal':'터미널', 'The Labyrinth':'미궁', 'Icebreaker':'아이스브레이커' };
+const mapLabels = {customs:'세관',factory:'팩토리','night-factory':'팩토리','ground-zero-21':'그라운드 제로','ground-zero-21+':'그라운드 제로',woods:'우드',shoreline:'해안선',interchange:'인터체인지',reserve:'리저브',lighthouse:'등대',streets:'스트리트','streets-of-tarkov':'스트리트',labs:'연구소','the-lab':'연구소','ground-zero':'그라운드 제로',terminal:'터미널','the-labyrinth':'미궁',icebreaker:'아이스브레이커'};
+const mapSlugs = {세관:'customs',팩토리:'factory',우드:'woods',해안선:'shoreline',인터체인지:'interchange',리저브:'reserve',등대:'lighthouse',스트리트:'streets',연구소:'labs','그라운드 제로':'ground-zero',터미널:'terminal',미궁:'the-labyrinth',아이스브레이커:'icebreaker'};
 // Map previews are third-party images, not copies stored in this project.
 // URLs confirmed from the open-source tarkov.dev maps.json. No unverified paths.
 const MAP_PREVIEWS = Object.freeze({
   '세관':'https://assets.tarkov.dev/maps/svg/Customs.svg',
   '팩토리':'https://assets.tarkov.dev/maps/svg/Factory.svg',
-  '야간 팩토리':'https://assets.tarkov.dev/maps/svg/Factory.svg',
   '우드':'https://assets.tarkov.dev/maps/svg/Woods.svg',
   '해안선':'https://assets.tarkov.dev/maps/svg/Shoreline.svg',
   '인터체인지':'https://assets.tarkov.dev/maps/svg/Interchange.svg',
@@ -62,7 +61,7 @@ const QUEST_DETAIL_QUERY = `query KeyQuestDetails($id: ID!) {
     id name objectives { id description }
   }
 }`;
-// v0.7.2: JSON API is the supported source; GraphQL is a best-effort fallback.
+// v0.7.3: JSON API is the supported source; GraphQL is a best-effort fallback.
 // The JSON feed is indexed by id and uses separate translated string dictionaries.
 const JSON_API = 'https://json.tarkov.dev/regular/';
 const KEY_CATEGORY_IDS = new Set([
@@ -214,11 +213,35 @@ function writeJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(
 function getOwned() { const data = readJSON(OWNED_KEY, ownedMemory); return data && typeof data === 'object' && !Array.isArray(data) ? data : {}; }
 function setOwned(value) { ownedMemory = value; return writeJSON(OWNED_KEY, value); }
 function normalized(s) { return String(s || '').normalize('NFKC').toLocaleLowerCase().trim(); }
+// Variant maps share geometry and are represented as one canonical map everywhere.
+// Keep this normalization for JSON, GraphQL and old browser caches alike.
+const MAP_ALIAS_TARGETS = Object.freeze({
+  'night-factory':'팩토리',
+  'factory-night':'팩토리',
+  'factory-nighttime':'팩토리',
+  'nighttime-factory':'팩토리',
+  '야간-팩토리':'팩토리',
+  'ground-zero-21':'그라운드 제로',
+  'ground-zero-21+':'그라운드 제로',
+  'ground-zero-21-plus':'그라운드 제로',
+  'ground-zero-level-21':'그라운드 제로',
+  'ground-zero-level-21+':'그라운드 제로',
+  '그라운드-제로-21':'그라운드 제로',
+  '그라운드-제로-21+':'그라운드 제로',
+  '그라운드-제로-21레벨':'그라운드 제로'
+});
+function canonicalMapName(name) {
+  const raw=String(name||'').trim();
+  const key=normalized(raw).replace(/[()_\s]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+  return MAP_ALIAS_TARGETS[key]||raw;
+}
 function koreanMapName(name) {
-  if (labels[name]) return labels[name];
+  const canonical=canonicalMapName(name);
+  if(canonical!==String(name||'').trim())return canonical;
+  if (labels[name]) return canonicalMapName(labels[name]);
   const n = normalized(name);
-  if (mapLabels[n]) return mapLabels[n];
-  if (n.includes('night') && n.includes('factory')) return '야간 팩토리';
+  if (mapLabels[n]) return canonicalMapName(mapLabels[n]);
+  if (n.includes('night') && n.includes('factory')) return '팩토리';
   if (n.includes('factory')) return '팩토리';
   if (n.includes('labyrinth')) return '미궁';
   if (n === 'lab' || n === 'labs' || n.includes('the lab')) return '연구소';
@@ -358,13 +381,26 @@ function displayMaps(item) {
   if (verified.length) return verified;
   return item.hint?.mapName ? [item.hint.mapName] : [];
 }
+// Migrate old cached item maps as well as newly downloaded records.
+// Deduplicate shared night/day and level variants WITHOUT changing item IDs.
 function prepareItem(item) {
-  item.mapNames = Array.isArray(item.mapNames) ? item.mapNames : [];
-  item.lockPositions = Array.isArray(item.lockPositions) ? item.lockPositions : [];
-  item.tasks = Array.isArray(item.tasks) ? item.tasks : [];
-  item.accessMaps = Array.isArray(item.accessMaps) ? item.accessMaps : [];
-  item.hint = nameHint(item.nameEn);
-  item.keycard = keycardCheck(item);
+  const canonicalList=source=>[...new Set((Array.isArray(source)?source:[])
+    .filter(name=>typeof name==='string'&&name.trim())
+    .map(name=>koreanMapName(name)))].sort((a,b)=>a.localeCompare(b,'ko'));
+  item.mapNames=canonicalList(item.mapNames);
+  item.accessMaps=canonicalList(item.accessMaps);
+  const seenPositions=new Set();
+  item.lockPositions=(Array.isArray(item.lockPositions)?item.lockPositions:[])
+    .filter(pos=>pos&&typeof pos==='object')
+    .map(pos=>({...pos,mapName:koreanMapName(pos.mapName)}))
+    .filter(pos=>{
+      const key=[pos.mapName,pos.x,pos.y,pos.z].join('|');
+      if(seenPositions.has(key))return false;
+      seenPositions.add(key);return true;
+    });
+  item.tasks=Array.isArray(item.tasks)?item.tasks:[];
+  item.hint=nameHint(item.nameEn);
+  item.keycard=keycardCheck(item);
   return item;
 }
 function makeItems(english, korean, maps) {
@@ -500,7 +536,7 @@ function createSvg(name,attributes){
   for(const [key,value] of Object.entries(attributes||{}))node.setAttribute(key,String(value));
   return node;
 }
-// v0.7.2 – linked quests for the selected map (instead of a duplicate X/Z plot).
+// v0.7.3 – linked quests for the selected map (instead of a duplicate X/Z plot).
 function renderAtlasQuests(map){
   const container=$('atlas-quests'),counter=$('atlas-quest-count'),empty=$('atlas-quest-empty');
   if(!container||!counter||!empty)return;
@@ -565,10 +601,11 @@ function updateFilters() {
   const dropdown=$('map'), previous=dropdown.value;
   const counts = new Map();
   for (const item of items) for (const map of displayMaps(item)) counts.set(map,(counts.get(map)||0)+1);
-  const known=[...new Set([...ALWAYS_VISIBLE_MAPS,...counts.keys()])];
+  const known=[...new Set([...ALWAYS_VISIBLE_MAPS,...counts.keys()].map(koreanMapName))];
   dropdown.replaceChildren(new Option('전체 맵','all'));
   for (const name of known) dropdown.add(new Option(items.length?`${name} (${counts.get(name)||0})`:name,name));
-  dropdown.value=known.includes(previous)?previous:'all';
+  const normalizedPrevious=koreanMapName(previous);
+  dropdown.value=known.includes(normalizedPrevious)?normalizedPrevious:'all';
   const shortcuts=$('map-shortcuts');
   shortcuts.replaceChildren();
   for (const [label,value] of [['전체','all'],...known.map(name=>[name,name])]) {
