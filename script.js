@@ -1,198 +1,299 @@
 'use strict';
-// Tarkov Key Guide v0.3 — GitHub Pages (no backend, no login).
+// Tarkov Key Guide v0.4. GitHub Pages, no account, no backend.
 const API = 'https://api.tarkov.dev/graphql';
-const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // Keep old key; v0.1 ownership persists.
-const CACHE_KEY = 'tarkov-key-guide-items-v3';
+const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // DO NOT CHANGE: existing users' checkmarks.
+const CACHE_KEY = 'tarkov-key-guide-items-v4';
+const OLD_CACHE_KEYS = ['tarkov-key-guide-items-v3', 'tarkov-key-guide-items-v2'];
 const queryEnglish = `query { items(types:[keys],lang:en) { id name shortName iconLink wikiLink description usedInTasks { id name } properties { ... on ItemPropertiesKey { uses } } } }`;
 const queryKorean = `query { items(types:[keys],lang:ko) { id name shortName usedInTasks { id name } } }`;
-const queryMaps = `query { maps { name normalizedName accessKeys { id } locks { key { id } position { x y z } } } }`;
+// Lock has no room name in the public schema; avoid inventing a building or floor.
+const queryMaps = `query { maps { name normalizedName accessKeys { id } locks { key { id } lockType needsPower position { x y z } } } }`;
 const $ = id => document.getElementById(id);
 const labels = { 'Customs':'세관', 'Factory':'팩토리', 'Factory (Night)':'야간 팩토리', 'Woods':'우드', 'Shoreline':'해안선', 'Interchange':'인터체인지', 'Reserve':'리저브', 'Lighthouse':'등대', 'Streets of Tarkov':'스트리트', 'The Lab':'연구소', 'Ground Zero':'그라운드 제로', 'Terminal':'터미널', 'The Labyrinth':'미궁', 'Icebreaker':'아이스브레이커' };
+const mapLabels = {customs:'세관',factory:'팩토리','night-factory':'야간 팩토리',woods:'우드',shoreline:'해안선',interchange:'인터체인지',reserve:'리저브',lighthouse:'등대',streets:'스트리트','streets-of-tarkov':'스트리트',labs:'연구소','the-lab':'연구소','ground-zero':'그라운드 제로',terminal:'터미널','the-labyrinth':'미궁',icebreaker:'아이스브레이커'};
+const mapSlugs = {세관:'customs',팩토리:'factory','야간 팩토리':'factory',우드:'woods',해안선:'shoreline',인터체인지:'interchange',리저브:'reserve',등대:'lighthouse',스트리트:'streets',연구소:'labs','그라운드 제로':'ground-zero',터미널:'terminal',미궁:'the-labyrinth',아이스브레이커:'icebreaker'};
 let items = [];
 let ownedMemory = {};
-let lastApiTimestamp = null;
 let loadSequence = 0;
-function readJSON(key, fallback) { try { const raw=localStorage.getItem(key);return raw?JSON.parse(raw):fallback; } catch {return fallback;} }
-function writeJSON(key, value) { try {localStorage.setItem(key,JSON.stringify(value));return true;}catch{return false;} }
-function getOwned() { const data=readJSON(OWNED_KEY,ownedMemory);return data && typeof data==='object'&&!Array.isArray(data)?data:{}; }
-function setOwned(value) {ownedMemory=value;return writeJSON(OWNED_KEY,value);}
-function normalizeName(s){return (s||'').normalize('NFKC').toLocaleLowerCase().trim();}
+let initialLinkHandled = false;
+function readJSON(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
+function writeJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } }
+function getOwned() { const data = readJSON(OWNED_KEY, ownedMemory); return data && typeof data === 'object' && !Array.isArray(data) ? data : {}; }
+function setOwned(value) { ownedMemory = value; return writeJSON(OWNED_KEY, value); }
+function normalized(s) { return String(s || '').normalize('NFKC').toLocaleLowerCase().trim(); }
 function koreanMapName(name) {
-  if(labels[name])return labels[name];
-  const n=(name||'').toLowerCase();
-  if(n.includes('night') && n.includes('factory'))return '야간 팩토리';
-  if(n.includes('factory'))return '팩토리';
-  if(n.includes('labyrinth'))return '미궁';
-  if(n.includes('lab'))return '연구소';
-  if(n.includes('custom'))return '세관';
-  if(n.includes('reserve'))return '리저브';
-  if(n.includes('shore'))return '해안선';
-  if(n.includes('street'))return '스트리트';
-  if(n.includes('ground zero'))return '그라운드 제로';
-  if(n.includes('wood'))return '우드';
-  if(n.includes('light'))return '등대';
-  if(n.includes('interchange'))return '인터체인지';
-  if(n.includes('terminal'))return '터미널';
-  if(n.includes('icebreaker'))return '아이스브레이커';
-  return name || '이름 미확인';
+  if (labels[name]) return labels[name];
+  const n = normalized(name);
+  if (mapLabels[n]) return mapLabels[n];
+  if (n.includes('night') && n.includes('factory')) return '야간 팩토리';
+  if (n.includes('factory')) return '팩토리';
+  if (n.includes('labyrinth')) return '미궁';
+  if (n === 'lab' || n === 'labs' || n.includes('the lab')) return '연구소';
+  if (n.includes('custom')) return '세관';
+  if (n.includes('reserve')) return '리저브';
+  if (n.includes('shore')) return '해안선';
+  if (n.includes('street')) return '스트리트';
+  if (n.includes('ground zero')) return '그라운드 제로';
+  if (n.includes('wood')) return '우드';
+  if (n.includes('light')) return '등대';
+  if (n.includes('interchange')) return '인터체인지';
+  if (n.includes('terminal')) return '터미널';
+  if (n.includes('icebreaker')) return '아이스브레이커';
+  return String(name || '이름 미확인');
 }
-function keycardCheck(item){return /keycard|key card|access card|카드|키카드/i.test(`${item.nameEn} ${item.nameKo} ${item.shortNameEn}`);}
-function makeItems(english,korean,maps){
-  const ko = new Map((korean||[]).filter(x=>x?.id).map(x=>[x.id,x]));
-  const assigned = new Map();
-  const positions = new Map();
-  for(const m of (maps||[])){
-    const mapName=koreanMapName(m?.name||m?.normalizedName);
-    if(!mapName)continue;
-    const ids=[...(m?.locks||[]).map(x=>x?.key?.id),...(m?.accessKeys||[]).map(x=>x?.id)];
-    for (const lock of (m?.locks||[])) {
-      const id=lock?.key?.id, pos=lock?.position;
-      if(!id || !pos || ![pos.x,pos.y,pos.z].every(Number.isFinite)) continue;
-      if(!positions.has(id)) positions.set(id,[]);
-      const list=positions.get(id);
-      const key=`${mapName}|${pos.x}|${pos.y}|${pos.z}`;
-      if(!list.some(entry=>entry.key===key)) list.push({key,mapName,x:pos.x,y:pos.y,z:pos.z});
+function keycardCheck(x) { return /keycard|key card|access card|키카드|출입 카드/i.test(`${x.nameEn} ${x.nameKo} ${x.shortNameEn}`); }
+// These are NAME-BASED hints, explicitly NOT verified game locations.
+function nameHint(name) {
+  const value = String(name || '');
+  let match = value.match(/(?:west\s*wing|westwing)(?:\s*room)?\s*(\d{3})\b/i);
+  if (match) return { mapName:'해안선', text:`리조트 서관 · ${match[1][0]}층 · ${match[1]}호`, source:'이름 단서' };
+  match = value.match(/(?:east\s*wing|eastwing)(?:\s*room)?\s*(\d{3})\b/i);
+  if (match) return { mapName:'해안선', text:`리조트 동관 · ${match[1][0]}층 · ${match[1]}호`, source:'이름 단서' };
+  match = value.match(/(?:dorm|dormitory)\s*room\s*(\d{3})\b/i);
+  if (match) return { mapName:'세관', text:`기숙사 · ${match[1][0]}층 · ${match[1]}호`, source:'이름 단서' };
+  if (/^RB-[A-Z0-9-]+\b/i.test(value)) return { mapName:'리저브', text:'RB- 계열 열쇠 · 방 위치 추가 확인 필요', source:'이름 단서' };
+  if (/\bKIBA\b/i.test(value)) return { mapName:'인터체인지', text:'KIBA 상점 관련 · 상세 출입구 확인 필요', source:'이름 단서' };
+  if (/\bULTRA\s+medical\b/i.test(value)) return { mapName:'인터체인지', text:'ULTRA 의료 구역 관련 · 상세 출입구 확인 필요', source:'이름 단서' };
+  if (/\bTerraGroup\s+Labs?\b/i.test(value)) return { mapName:'연구소', text:'TerraGroup Labs 관련 · 사용 위치 확인 필요', source:'이름 단서' };
+  return null;
+}
+function displayMaps(item) {
+  const verified = Array.isArray(item.mapNames) ? item.mapNames : [];
+  if (verified.length) return verified;
+  return item.hint?.mapName ? [item.hint.mapName] : [];
+}
+function prepareItem(item) {
+  item.mapNames = Array.isArray(item.mapNames) ? item.mapNames : [];
+  item.lockPositions = Array.isArray(item.lockPositions) ? item.lockPositions : [];
+  item.tasks = Array.isArray(item.tasks) ? item.tasks : [];
+  item.accessMaps = Array.isArray(item.accessMaps) ? item.accessMaps : [];
+  item.hint = nameHint(item.nameEn);
+  item.keycard = keycardCheck(item);
+  return item;
+}
+function makeItems(english, korean, maps) {
+  const ko = new Map((korean || []).filter(x => x?.id).map(x => [x.id, x]));
+  const assigned = new Map(), access = new Map(), positions = new Map();
+  for (const m of (maps || [])) {
+    const mapName = koreanMapName(m?.normalizedName || m?.name);
+    if (!mapName) continue;
+    const insert = (target,id) => { if (!id) return; if (!target.has(id)) target.set(id,new Set()); target.get(id).add(mapName); };
+    for (const a of (m?.accessKeys || [])) { insert(assigned,a?.id); insert(access,a?.id); }
+    for (const lock of (m?.locks || [])) {
+      const id = lock?.key?.id;
+      insert(assigned,id);
+      const pos = lock?.position;
+      if (!id || !pos || ![pos.x,pos.y,pos.z].every(Number.isFinite)) continue;
+      if (!positions.has(id)) positions.set(id,[]);
+      const list = positions.get(id);
+      if (!list.some(p => p.mapName===mapName && p.x===pos.x && p.y===pos.y && p.z===pos.z)) {
+        list.push({mapName,x:pos.x,y:pos.y,z:pos.z,needsPower:lock.needsPower===true,lockType:String(lock.lockType||'')});
+      }
     }
-    for(const id of ids){if(!id)continue; if(!assigned.has(id))assigned.set(id,new Set());assigned.get(id).add(mapName);}
   }
-  const dedup=new Map();
-  for(const x of english||[]){
-    if(!x?.id)continue;
-    const koItem=ko.get(x.id);
-    const en=(x.name||x.shortName||x.id).trim();
-    const nameKo=(koItem?.name||'').trim();
-    const mapNames=[...(assigned.get(x.id)||[])].sort((a,b)=>a.localeCompare(b,'ko'));
-    const koTasks = new Map((koItem?.usedInTasks||[]).filter(t=>t?.id).map(t=>[t.id,t.name]));
-    const tasks=(Array.isArray(x.usedInTasks)?x.usedInTasks:[]).filter(t=>t?.id).map(t=>({id:t.id,name:t.name||'이름 미확인',nameKo:koTasks.get(t.id)||''}));
-    const item={id:x.id,nameEn:en,nameKo:nameKo&&nameKo!==en?nameKo:'',shortNameEn:x.shortName||'',shortNameKo:koItem?.shortName||'',iconLink:x.iconLink||'',wikiLink:x.wikiLink||'',description:x.description||'',mapNames,tasks,lockPositions:positions.get(x.id)||[],uses:Number.isInteger(x.properties?.uses)?x.properties.uses:null};
-    item.keycard=keycardCheck(item);
-    dedup.set(x.id,item);
+  const unique = new Map();
+  for (const item of (english || [])) {
+    if (!item?.id) continue;
+    const koItem = ko.get(item.id);
+    const en = String(item.name || item.shortName || item.id).trim();
+    const nameKo = String(koItem?.name || '').trim();
+    const koTasks = new Map((koItem?.usedInTasks || []).filter(t=>t?.id).map(t=>[t.id,t.name]));
+    const tasks = (item.usedInTasks || []).filter(t=>t?.id).map(t=>({id:t.id,name:t.name||'이름 미확인',nameKo:koTasks.get(t.id)||''}));
+    unique.set(item.id,prepareItem({id:item.id,nameEn:en,nameKo:nameKo!==en?nameKo:'',shortNameEn:item.shortName||'',shortNameKo:koItem?.shortName||'',iconLink:item.iconLink||'',wikiLink:item.wikiLink||'',description:item.description||'',mapNames:[...(assigned.get(item.id)||[])].sort((a,b)=>a.localeCompare(b,'ko')),accessMaps:[...(access.get(item.id)||[])],tasks,lockPositions:positions.get(item.id)||[],uses:Number.isInteger(item.properties?.uses)?item.properties.uses:null}));
   }
-  return [...dedup.values()].sort((a,b)=>a.nameEn.localeCompare(b.nameEn,'en'));
+  return [...unique.values()].sort((a,b)=>a.nameEn.localeCompare(b.nameEn,'en'));
 }
-function text(tag,cls,value){const node=document.createElement(tag);if(cls)node.className=cls;node.textContent=value;return node;}
-function updateFilters(){
-  const dropdown=$('map'), old=dropdown.value;
+function el(tag,cls,value) { const node=document.createElement(tag); if(cls)node.className=cls; if(value!==undefined)node.textContent=value; return node; }
+function mapUrl(name) { const slug=mapSlugs[name]; return slug ? `https://tarkov.dev/map/${slug}` : null; }
+function link(url,title,cls) {
+  const a=el('a',cls,title); a.href=url; a.target='_blank'; a.rel='noopener noreferrer'; return a;
+}
+function updateFilters() {
+  const dropdown=$('map'), previous=dropdown.value;
   dropdown.replaceChildren(new Option('전체 맵','all'));
-  const all=[...new Set(items.flatMap(x=>x.mapNames))].sort((a,b)=>a.localeCompare(b,'ko'));
-  for(const name of all)dropdown.add(new Option(name,name));
-  if(all.includes(old))dropdown.value=old;
+  const counts = new Map();
+  for (const item of items) for (const map of displayMaps(item)) counts.set(map,(counts.get(map)||0)+1);
+  const sorted=[...counts].sort(([a],[b])=>a.localeCompare(b,'ko'));
+  for (const [name,count] of sorted) dropdown.add(new Option(`${name} (${count})`,name));
+  if(counts.has(previous)) dropdown.value=previous;
+  const shortcuts=$('map-shortcuts'); shortcuts.replaceChildren();
+  if (!items.length) return;
+  const list=[['전체','all'], ...sorted.sort((a,b)=>b[1]-a[1]).slice(0,8).map(([name])=>[name,name])];
+  for (const [label,value] of list) {
+    const button=el('button','map-shortcut'+(dropdown.value===value?' active':''),label);
+    button.type='button'; button.setAttribute('aria-pressed',String(dropdown.value===value));
+    button.addEventListener('click',()=>{dropdown.value=value;render();});
+    shortcuts.append(button);
+  }
 }
-function matches(x,search,map,filter,type,purpose,owned){
-  if(map!=='all'&&!x.mapNames.includes(map))return false;
-  if(filter==='owned'&&!owned[x.id])return false;
-  if(filter==='missing'&&owned[x.id])return false;
-  if(type==='keycard'&&!x.keycard)return false;
-  if(type==='key'&&x.keycard)return false;
-  if(purpose==='quest'&&!x.tasks.length)return false;
-  if(purpose==='unmapped'&&x.mapNames.length)return false;
-  const haystack=normalizeName(`${x.nameKo} ${x.nameEn} ${x.shortNameEn} ${x.shortNameKo} ${x.mapNames.join(' ')} ${x.tasks.map(t=>t.name).join(' ')}`);
-  return !search||haystack.includes(search);
+function updateShortcutSelection(){ for (const b of $('map-shortcuts').children) { const active=b.textContent===('전체'===b.textContent?'전체':$('map').value) && (b.textContent!=='전체'||$('map').value==='all'); b.classList.toggle('active',active); b.setAttribute('aria-pressed',String(active)); } }
+function matches(item,search,map,filter,type,purpose,owned) {
+  if(map!=='all' && !displayMaps(item).includes(map))return false;
+  if(filter==='owned' && !owned[item.id])return false;
+  if(filter==='missing' && owned[item.id])return false;
+  if(type==='keycard' && !item.keycard)return false;
+  if(type==='key' && item.keycard)return false;
+  if(purpose==='quest' && !item.tasks.length)return false;
+  if(purpose==='unmapped' && item.mapNames.length)return false;
+  if(purpose==='located' && !item.lockPositions.length)return false;
+  if(purpose==='access' && !item.accessMaps.length)return false;
+  const terms=normalized(`${item.nameKo} ${item.nameEn} ${item.shortNameEn} ${item.shortNameKo} ${displayMaps(item).join(' ')} ${item.hint?.text||''} ${item.tasks.map(t=>`${t.name} ${t.nameKo}`).join(' ')}`);
+  return !search || search.split(/\s+/).every(word=>terms.includes(word));
 }
-function showDetail(x){
-  const body=$('detail-body');body.replaceChildren();
-  const head=text('div','detail-top','');
-  if(x.iconLink){const img=document.createElement('img');img.src=x.iconLink;img.alt='';head.append(img);}
-  const names=document.createElement('div');names.append(text('h2','',x.nameKo||x.nameEn));
-  if(x.nameKo)names.append(text('p','',x.nameEn));
-  head.append(names);body.append(head);
-  const addSection=(heading,content)=>{const s=text('section','detail-section','');s.append(text('h3','',heading));s.append(content);body.append(s);};
-  addSection('사용 맵',text('p','',x.mapNames.length?x.mapNames.join(', '):'공개 데이터에 맵 연결 정보가 없습니다. (확인 필요)'));
-  addSection('종류',text('p','',x.keycard?'키카드 / 출입 카드':'열쇠'));
-  if(Number.isInteger(x.uses)) addSection('사용 횟수',text('p','',x.uses===0?'무제한 또는 미설정 (게임 내 확인 필요)':`${x.uses}회`));
-  if(x.lockPositions?.length){
-    const ul=document.createElement('ul');
-    for(const pos of x.lockPositions.slice(0,40)){
-      const fmt=n=>Number(n).toFixed(1).replace(/\.0$/,'');
-      ul.append(text('li','',`${pos.mapName}: X ${fmt(pos.x)} · Y ${fmt(pos.y)} · Z ${fmt(pos.z)}`));
+function section(body,heading,content) { const s=el('section','detail-section');s.append(el('h3','',heading),content);body.append(s); }
+function showDetail(item, updateAddress=true) {
+  const body=$('detail-body'); body.replaceChildren();
+  const header=el('div','detail-top');
+  if(item.iconLink){const image=el('img');image.src=item.iconLink;image.alt='';header.append(image);}
+  const names=el('div');names.append(el('h2','',item.nameKo||item.nameEn));if(item.nameKo)names.append(el('p','',item.nameEn));header.append(names);body.append(header);
+  const status=el('div','detail-facts');
+  status.append(el('span','fact',item.keycard?'▣ 키카드/출입 카드':'⚿ 일반 열쇠'));
+  if(Number.isInteger(item.uses))status.append(el('span','fact',item.uses===0?'사용 횟수: 0 (의미 확인 필요)':`사용 횟수: ${item.uses}회`));
+  if(item.accessMaps.length) status.append(el('span','fact accent','맵 입장용 열쇠'));
+  if(item.tasks.length)status.append(el('span','fact accent',`연관 퀘스트 ${item.tasks.length}개`));
+  body.append(status);
+  const mapWrap=el('div','location-list');
+  if(item.mapNames.length) {
+    for (const map of item.mapNames){const line=el('div','location-row');line.append(el('span','source-tag verified','API 확인'),el('strong','',map));const url=mapUrl(map);if(url)line.append(link(url,'지도 보기 ↗','map-link'));mapWrap.append(line);}
+  } else if(item.hint) {
+    const line=el('div','location-row');line.append(el('span','source-tag guessed','이름 단서'),el('strong','',item.hint.mapName));const url=mapUrl(item.hint.mapName);if(url)line.append(link(url,'지도 보기 ↗','map-link'));mapWrap.append(line);
+    mapWrap.append(el('p','caution','맵이 API로 확인되지 않아 열쇠 이름을 근거로 안내합니다. 실제 사용처는 위키에서 확인하세요.'));
+  } else mapWrap.append(el('p','caution','공개 데이터에서 사용 맵 연결을 확인할 수 없습니다.'));
+  section(body,'사용 맵',mapWrap);
+  if(item.hint) section(body,'건물 · 층 · 방 정보 (이름 단서)',el('p','caution',`${item.hint.text} — 아이템 이름에 있는 정보로 구성한 안내이며, 실제 사용 가능 위치의 검증 자료는 아닙니다.`));
+  if(item.lockPositions.length) {
+    const wrapper=el('div','coordinates');
+    const format=n=>Number(n).toFixed(1).replace(/\.0$/,'');
+    for(const pos of item.lockPositions.slice(0,50)) {
+      const p=el('div','coord-row');
+      p.append(el('strong','',pos.mapName),el('code','',`X ${format(pos.x)} · Y ${format(pos.y)} · Z ${format(pos.z)}`));
+      if(pos.needsPower)p.append(el('span','fact warning','전력 필요 (API)'));
+      wrapper.append(p);
     }
-    addSection('잠긴 문 위치 좌표 (API 제공)',ul);
-    addSection('좌표 안내',text('p','','좌표는 게임 내 월드 좌표가 아닌 지도용 좌표계일 수 있습니다. 상세 출입구 확인에는 위키를 참고하세요.'));
+    if(item.lockPositions.length>50)wrapper.append(el('p','caution',`나머지 ${item.lockPositions.length-50}개 위치는 생략했습니다.`));
+    wrapper.append(el('p','caution','API 지도 좌표이며 게임 내 월드 좌표와 다를 수 있습니다. 정확한 출입구와 층수는 맵 또는 위키에서 확인하세요.'));
+    section(body,'잠긴 문 좌표 (API 제공)',wrapper);
   }
-  if(x.tasks.length){const ul=document.createElement('ul');for(const t of x.tasks)ul.append(text('li','',t.nameKo&&t.nameKo!==t.name?`${t.nameKo} (${t.name})`:t.name));addSection('관련 퀘스트',ul);}
-  else addSection('관련 퀘스트',text('p','','API에 연결된 퀘스트 정보가 없습니다.'));
-  if(x.description)addSection('아이템 설명 (영문)',text('p','',x.description));
-  if(x.wikiLink&&x.wikiLink.startsWith('https://')){
-    const p=document.createElement('p'),a=document.createElement('a');a.href=x.wikiLink;a.target='_blank';a.rel='noopener noreferrer';a.textContent='위키에서 정확한 사용 위치·보상 확인 ↗';p.append(a);addSection('추가 정보',p);
-  }
-  const note=text('p','','맵 정보는 API의 잠긴 문·입장용 열쇠 연결을 기준으로 표시됩니다. 실제 사용처와 최신 패치 정보는 위키도 확인해주세요.');addSection('안내',note);
-  $('detail').showModal();
+  if(item.accessMaps.length)section(body,'맵 진입에 필요한 열쇠',el('p','',`${item.accessMaps.join(', ')} 입장용으로 API에 등록되어 있습니다.`));
+  if(item.tasks.length){const ul=el('ul','quest-list');for(const t of item.tasks){const li=el('li');li.append(el('strong','',t.nameKo&&t.nameKo!==t.name?t.nameKo:t.name));if(t.nameKo&&t.nameKo!==t.name)li.append(el('small','',t.name));ul.append(li);}section(body,'관련 퀘스트 (API 연관 정보)',ul);}
+  else section(body,'관련 퀘스트',el('p','caution','API에 연결된 퀘스트가 없습니다. 퀘스트에 필요하지 않다는 확정 정보는 아닙니다.'));
+  if(item.description)section(body,'아이템 설명 (영문)',el('p','',item.description));
+  const more=el('div','detail-actions');
+  if(/^https:\/\//i.test(item.wikiLink)) more.append(link(item.wikiLink,'위키에서 정확한 방 위치 확인 ↗','detail-action-link'));
+  const share=el('button','share-btn','🔗 이 열쇠 링크 복사');share.type='button';
+  share.addEventListener('click',async()=>{
+    const url=new URL(window.location.href);url.searchParams.set('key',item.id);
+    try{await navigator.clipboard.writeText(url.href);share.textContent='✓ 링크 복사 완료';}
+    catch{window.prompt('이 링크를 복사하세요:',url.href);}
+  });
+  more.append(share);section(body,'추가 정보 · 공유',more);
+  if(updateAddress){const url=new URL(window.location.href);url.searchParams.set('key',item.id);history.replaceState(null,'',url);}
+  if(!$('detail').open)$('detail').showModal();
 }
-function cardFor(x,owned){
-  const card=document.createElement('article');card.className='card'+(owned[x.id]?' is-owned':'');
-  const top=text('div','card-header','');top.append(text('span','tag'+(x.mapNames.length?' verified':''),x.mapNames.length?x.mapNames.length+'개 맵':'맵 미확인'));
-  if(x.tasks.length)top.append(text('span','tag quest','퀘스트'));card.append(top);
-  const image=text('div','card-image','');if(x.iconLink){const img=document.createElement('img');img.loading='lazy';img.alt='';img.src=x.iconLink;image.append(img);}else image.append(text('span','no-image','⚿'));card.append(image);
-  card.append(text('h3','',x.nameKo||x.nameEn));card.append(text('div','subname',x.nameKo?x.nameEn:(x.shortNameEn||' ')));
-  card.append(text('div','map-chip',x.mapNames.length?x.mapNames.join(' · '):'사용 맵: 확인 필요'));
-  if(x.lockPositions?.length) card.append(text('div','position-hint',`⌖ 잠긴 문 위치 ${x.lockPositions.length}곳 확인`));
-  const bottom=text('div','card-bottom','');const label=text('label','owned-label','');const check=document.createElement('input');check.type='checkbox';check.checked=!!owned[x.id];check.setAttribute('aria-label',`${x.nameKo||x.nameEn} 보유 체크`);
-  check.addEventListener('change',()=>{const next={...getOwned()};if(check.checked)next[x.id]=true;else delete next[x.id];if(!setOwned(next))$('status').textContent='저장 공간을 사용할 수 없습니다. 브라우저 설정을 확인하세요.';render();});
+function closeDetail(){ $('detail').close();const url=new URL(window.location.href);url.searchParams.delete('key');history.replaceState(null,'',url); }
+function cardFor(item,owned){
+  const card=el('article','card'+(owned[item.id]?' is-owned':''));
+  const tags=el('div','card-header');
+  tags.append(el('span','tag'+(item.mapNames.length?' verified':item.hint?' inferred':''),item.mapNames.length?`${item.mapNames.length}개 맵 확인`:item.hint?'맵 이름 단서':'맵 미확인'));
+  if(item.tasks.length)tags.append(el('span','tag quest','퀘스트'));
+  card.append(tags);
+  const image=el('div','card-image');if(item.iconLink){const img=el('img');img.loading='lazy';img.alt='';img.src=item.iconLink;image.append(img);}else image.append(el('span','no-image','⚿'));card.append(image);
+  card.append(el('h3','',item.nameKo||item.nameEn),el('div','subname',item.nameKo?item.nameEn:(item.shortNameEn||' ')));
+  const effective=displayMaps(item);
+  card.append(el('div','map-chip',(item.mapNames.length?'✓ ':'? ')+(effective.join(' · ') || '사용 맵 확인 필요')));
+  if(item.hint)card.append(el('div','hint-chip',`⌕ ${item.hint.text}`));
+  if(item.lockPositions.length)card.append(el('div','position-hint',`⌖ 잠긴 문 좌표 ${item.lockPositions.length}곳`));
+  if(item.accessMaps.length)card.append(el('div','position-hint','↗ 맵 입장용 열쇠'));
+  const bottom=el('div','card-bottom'),label=el('label','owned-label'),check=el('input');check.type='checkbox';check.checked=!!owned[item.id];check.setAttribute('aria-label',`${item.nameKo||item.nameEn} 보유 체크`);
+  check.addEventListener('change',()=>{const updated={...getOwned()};if(check.checked)updated[item.id]=true;else delete updated[item.id];if(!setOwned(updated))$('status').textContent='보유 기록 저장 실패: 브라우저 저장 설정을 확인하세요.';render();});
   label.append(check,document.createTextNode('보유 중'));bottom.append(label);
-  const detail=text('button','detail-btn','상세 보기');detail.type='button';detail.addEventListener('click',()=>showDetail(x));bottom.append(detail);card.append(bottom);return card;
+  const detail=el('button','detail-btn','상세 보기');detail.type='button';detail.addEventListener('click',()=>showDetail(item));bottom.append(detail);card.append(bottom);
+  return card;
 }
 function render(){
-  const owned=getOwned();const search=normalizeName($('search').value);const map=$('map').value,filter=$('filter').value,type=$('type').value,purpose=$('purpose').value,sort=$('sort').value;
-  const visible=items.filter(x=>matches(x,search,map,filter,type,purpose,owned));
+  const owned=getOwned();const search=normalized($('search').value),map=$('map').value,filter=$('filter').value,type=$('type').value,purpose=$('purpose').value,sort=$('sort').value;
+  const visible=items.filter(item=>matches(item,search,map,filter,type,purpose,owned));
   if(sort==='owned')visible.sort((a,b)=>Number(!!owned[b.id])-Number(!!owned[a.id])||a.nameEn.localeCompare(b.nameEn));
   if(sort==='missing')visible.sort((a,b)=>Number(!!owned[a.id])-Number(!!owned[b.id])||a.nameEn.localeCompare(b.nameEn));
-  const ownedCount=items.reduce((n,x)=>n+(owned[x.id]?1:0),0);
+  const ownedCount=items.reduce((sum,item)=>sum+(owned[item.id]?1:0),0);
   $('stat-total').textContent=items.length.toLocaleString('ko-KR');$('stat-owned').textContent=ownedCount.toLocaleString('ko-KR');$('stat-remaining').textContent=(items.length-ownedCount).toLocaleString('ko-KR');
   const percent=items.length?Math.round(100*ownedCount/items.length):0;$('stat-percent').textContent=percent+'%';$('progress-bar').style.width=percent+'%';
   $('result-count').textContent=`${visible.length.toLocaleString('ko-KR')}개 표시`;
-  const grid=$('cards'),frag=document.createDocumentFragment();
-  if(!visible.length)frag.append(text('p','empty',items.length?'검색 조건에 맞는 열쇠가 없어요.':'데이터가 아직 없습니다.'));
-  else for(const x of visible)frag.append(cardFor(x,owned));grid.replaceChildren(frag);
+  const fragment=document.createDocumentFragment();
+  if(!visible.length)fragment.append(el('p','empty',items.length?'검색 조건에 맞는 열쇠가 없습니다.':'데이터가 아직 없습니다.'));
+  else for(const item of visible)fragment.append(cardFor(item,owned));
+  $('cards').replaceChildren(fragment);
+  updateShortcutSelection();
 }
-async function graphql(query){
-  const res=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query}),signal:AbortSignal.timeout(18000)});
-  if(!res.ok)throw new Error(`API HTTP ${res.status}`);
-  const result=await res.json();
-  if(result.errors?.length)throw new Error(result.errors[0].message||'GraphQL 오류');
-  if(!Array.isArray(result.data?.items)&&!Array.isArray(result.data?.maps))throw new Error('예상과 다른 API 응답');
-  return result.data;
+function maybeOpenSharedItem(){
+  const id=new URL(window.location.href).searchParams.get('key');
+  if(!id||!items.length||$('detail').open)return;
+  const found=items.find(item=>item.id===id);
+  if(found)showDetail(found,false);
+  else if(!initialLinkHandled)$('status').textContent+=' · 공유된 열쇠를 현재 목록에서 찾을 수 없습니다.';
+  initialLinkHandled=true;
 }
-function updateStatus(message){$('status').textContent=message;}
+async function graphql(query,field){
+  const response=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query}),signal:AbortSignal.timeout(20000)});
+  if(!response.ok)throw Error(`API HTTP ${response.status}`);
+  const body=await response.json();
+  if(!Array.isArray(body?.data?.[field]))throw Error(body?.errors?.[0]?.message||'API 응답 구조 오류');
+  return {data:body.data[field],warning:body.errors?.length?'일부 정보 누락':null};
+}
+function status(message){$('status').textContent=message;}
+function cachedItems(){
+  for(const key of [CACHE_KEY,...OLD_CACHE_KEYS]){
+    const cache=readJSON(key,null);
+    if(Array.isArray(cache?.items)&&cache.items.length)return cache.items.map(prepareItem);
+  }
+  return [];
+}
 async function load(force=false){
-  const sequence=++loadSequence;
-  const cached=readJSON(CACHE_KEY,null);
-  if(!force&&cached?.version===3&&Array.isArray(cached.items)&&cached.items.length){items=cached.items;lastApiTimestamp=cached.timestamp||null;updateFilters();render();updateStatus('저장된 목록을 표시 중입니다. 최신 정보 확인 중...');}
-  else updateStatus('tarkov.dev에서 열쇠를 불러오는 중...');
-  const [en,ko,maps]=await Promise.allSettled([graphql(queryEnglish),graphql(queryKorean),graphql(queryMaps)]);
-  if(sequence!==loadSequence)return;
-  if(en.status!=='fulfilled'||!Array.isArray(en.value.items)){
-    const reason=en.status==='rejected'?en.reason.message:'영문 열쇠 목록 없음';
-    updateStatus(items.length?`저장된 목록을 사용 중입니다. API 갱신 실패: ${reason}`:`데이터를 불러오지 못했습니다: ${reason} · 잠시 후 새로고침해주세요.`);
+  const current=++loadSequence;
+  const cache=cachedItems();
+  if(cache.length && !items.length){items=cache;updateFilters();render();status('저장된 목록 표시 중 · 최신 데이터 확인 중...');maybeOpenSharedItem();}
+  else status('tarkov.dev에서 최신 열쇠 정보를 확인하는 중...');
+  const [en,ko,maps]=await Promise.allSettled([graphql(queryEnglish,'items'),graphql(queryKorean,'items'),graphql(queryMaps,'maps')]);
+  if(current!==loadSequence)return;
+  if(en.status!=='fulfilled'){
+    status(items.length?`저장된 목록 사용 중 · 갱신 실패: ${en.reason?.message||'연결 오류'}`:`열쇠 데이터 오류: ${en.reason?.message||'연결 실패'} · 잠시 후 새로고침해 주세요.`);
     render();return;
   }
-  const koList=ko.status==='fulfilled'?ko.value.items:[];
-  const mapsList=maps.status==='fulfilled'?maps.value.maps:[];
-  const fresh=makeItems(en.value.items,koList,mapsList);
-  if(!fresh.length){updateStatus('API에서 열쇠 목록이 0개로 반환되어 기존 데이터를 유지합니다.');return;}
-  items=fresh;lastApiTimestamp=Date.now();updateFilters();render();
-  writeJSON(CACHE_KEY,{version:3,timestamp:lastApiTimestamp,items});
-  const notes=[];if(ko.status==='rejected')notes.push('한국어 이름 일부 미제공');if(maps.status==='rejected')notes.push('맵 연결 정보 미제공');
-  const mapped=items.filter(x=>x.mapNames.length).length, positioned=items.filter(x=>x.lockPositions.length).length;
-  updateStatus(`열쇠·키카드 ${items.length}개 · 맵 연결 ${mapped}개 · 문 좌표 ${positioned}개 · 출처: tarkov.dev${notes.length?' · '+notes.join(' · '):''}`);
+  const previousById=new Map((items||[]).map(x=>[x.id,x]));
+  const fresh=makeItems(en.value.data,ko.status==='fulfilled'?ko.value.data:[],maps.status==='fulfilled'?maps.value.data:[]);
+  if(!fresh.length){status('API에서 0개가 반환되었습니다. 기존 목록을 보존합니다.');return;}
+  // If secondary API fails, preserve previously verified translations, maps and coordinates.
+  for(const item of fresh){const old=previousById.get(item.id);if(!old)continue;
+    if(ko.status!=='fulfilled'){item.nameKo=old.nameKo||'';item.shortNameKo=old.shortNameKo||'';item.tasks=item.tasks.map(t=>({...t,nameKo:old.tasks?.find(o=>o.id===t.id)?.nameKo||''}));}
+    if(maps.status!=='fulfilled'){item.mapNames=old.mapNames||[];item.accessMaps=old.accessMaps||[];item.lockPositions=old.lockPositions||[];}
+    prepareItem(item);
+  }
+  items=fresh;updateFilters();render();writeJSON(CACHE_KEY,{version:4,timestamp:Date.now(),items});maybeOpenSharedItem();
+  const mapped=items.filter(x=>x.mapNames.length).length,inferred=items.filter(x=>!x.mapNames.length&&x.hint).length,coordinates=items.filter(x=>x.lockPositions.length).length;
+  const warnings=[];if(ko.status==='rejected')warnings.push('한국어 데이터 갱신 실패');if(maps.status==='rejected')warnings.push('지도 데이터 갱신 실패');
+  for(const response of [en,ko,maps])if(response.status==='fulfilled'&&response.value.warning)warnings.push(response.value.warning);
+  status(`${items.length}개 · API 맵 확인 ${mapped}개 · 이름 단서 ${inferred}개 · 문 좌표 ${coordinates}개${warnings.length?' · '+[...new Set(warnings)].join(' / '):''}`);
 }
 for(const id of ['search','map','filter','type','purpose','sort'])$(id).addEventListener(id==='search'?'input':'change',render);
 $('refresh').addEventListener('click',()=>load(true));
-$('close-detail').addEventListener('click',()=>$('detail').close());
-$('detail').addEventListener('click',e=>{if(e.target===$('detail'))$('detail').close();});
+$('close-detail').addEventListener('click',closeDetail);
+$('detail').addEventListener('click',event=>{if(event.target===$('detail'))closeDetail();});
+$('detail').addEventListener('close',()=>{const url=new URL(window.location.href);if(url.searchParams.has('key')){url.searchParams.delete('key');history.replaceState(null,'',url);}});
 $('export').addEventListener('click',()=>{
   const blob=new Blob([JSON.stringify({version:1,owned:getOwned(),exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='tarkov-key-guide-backup.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+  const url=URL.createObjectURL(blob),anchor=el('a');anchor.href=url;anchor.download='tarkov-key-guide-backup.json';document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
 });
-$('import').addEventListener('change',async e=>{
-  const file=e.target.files?.[0];if(!file)return;
-  try {
+$('import').addEventListener('change',async event=>{
+  const file=event.target.files?.[0];if(!file)return;
+  try{
     if(file.size>2*1024*1024)throw Error('백업 파일이 너무 큽니다.');
     const data=JSON.parse(await file.text());
     if(data.version!==1||!data.owned||typeof data.owned!=='object'||Array.isArray(data.owned))throw Error('지원하지 않는 백업 형식입니다.');
-    const clean=Object.create(null);for(const [id,val] of Object.entries(data.owned))if(/^[0-9a-zA-Z]{1,64}$/.test(id)&&val===true)clean[id]=true;
-    if(!setOwned(clean))throw Error('브라우저에 보유 기록을 저장할 수 없습니다.');
+    const clean=Object.create(null);for(const [id,value] of Object.entries(data.owned))if(/^[0-9a-zA-Z]{1,64}$/.test(id)&&value===true)clean[id]=true;
+    if(!setOwned(clean))throw Error('브라우저에 기록을 저장할 수 없습니다.');
     render();alert('보유 현황을 가져왔습니다.');
-  }catch(error){alert('백업 가져오기 실패: '+error.message);}finally{e.target.value='';}
+  }catch(error){alert('백업 가져오기 실패: '+error.message);}finally{event.target.value='';}
 });
-window.addEventListener('storage',e=>{if(e.key===OWNED_KEY)render();});
+window.addEventListener('storage',event=>{if(event.key===OWNED_KEY)render();});
+window.addEventListener('popstate',()=>{if($('detail').open)$('detail').close();maybeOpenSharedItem();});
 load();
