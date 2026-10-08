@@ -1,5 +1,5 @@
 'use strict';
-// Tarkov Key Guide v0.7.1. GitHub Pages, no account, no backend.
+// Tarkov Key Guide v0.7.2. GitHub Pages, no account, no backend.
 const API = 'https://api.tarkov.dev/graphql';
 const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // DO NOT CHANGE: existing users' checkmarks.
 const CACHE_KEY = 'tarkov-key-guide-items-v4'; // Cache format unchanged: preserve working 0.4 data
@@ -62,7 +62,7 @@ const QUEST_DETAIL_QUERY = `query KeyQuestDetails($id: ID!) {
     id name objectives { id description }
   }
 }`;
-// v0.7.1: JSON API is the supported source; GraphQL is a best-effort fallback.
+// v0.7.2: JSON API is the supported source; GraphQL is a best-effort fallback.
 // The JSON feed is indexed by id and uses separate translated string dictionaries.
 const JSON_API = 'https://json.tarkov.dev/regular/';
 const KEY_CATEGORY_IDS = new Set([
@@ -433,7 +433,7 @@ function setAtlasImage(map){
     image.dataset.source=source;
     image.removeAttribute('src');image.hidden=true;content.hidden=!source;
     fallback.hidden=false;
-    fallback.textContent=source?'지도 이미지를 불러오는 중입니다...':'이 맵은 내장 SVG 지도가 없어 지도 위 마커를 제공하지 않습니다. 외부 지도 및 좌표 분포도를 확인하세요.';
+    fallback.textContent=source?'지도 이미지를 불러오는 중입니다...':'이 맵은 내장 SVG 지도가 없어 지도 위 마커를 제공하지 않습니다. 외부 지도 링크를 확인하세요.';
     if(source) image.src=source;
   }
   if(source&&image.complete&&image.naturalWidth>0){image.hidden=false;content.hidden=false;fallback.hidden=true;}
@@ -455,7 +455,7 @@ function renderAtlasOverlay(points){
   const preview=Boolean(MAP_PREVIEWS[atlasMap]);
   if(!calibration||!preview){
     count.textContent='마커 지원 전';
-    note.textContent=atlasMap==='팩토리'?'팩토리는 다른 좌표 회전을 사용하므로 실제 지도 위 마커를 아직 제공하지 않습니다. 우측 좌표 분포도를 이용하세요.':'이 맵은 검증된 SVG 지도 경계가 없어 지도 위 마커를 제공하지 않습니다. 우측 좌표 분포도를 이용하세요.';
+    note.textContent=atlasMap==='팩토리'?'팩토리는 다른 좌표 회전을 사용하므로 실제 지도 위 마커를 아직 제공하지 않습니다. tarkov.dev의 외부 지도 링크를 이용하세요.':'이 맵은 검증된 SVG 지도 경계가 없어 지도 위 마커를 제공하지 않습니다. tarkov.dev의 외부 지도 링크를 이용하세요.';
     overlay.hidden=true;return;
   }
   const owned=getOwned(),filter=$('atlas-pin-filter').value;
@@ -500,51 +500,61 @@ function createSvg(name,attributes){
   for(const [key,value] of Object.entries(attributes||{}))node.setAttribute(key,String(value));
   return node;
 }
+// v0.7.2 – linked quests for the selected map (instead of a duplicate X/Z plot).
+function renderAtlasQuests(map){
+  const container=$('atlas-quests'),counter=$('atlas-quest-count'),empty=$('atlas-quest-empty');
+  if(!container||!counter||!empty)return;
+  container.replaceChildren();
+  const quests=new Map();
+  for(const item of items){
+    if(!displayMaps(item).includes(map))continue;
+    for(const task of item.tasks||[]){
+      if(!task?.id)continue;
+      if(!quests.has(task.id))quests.set(task.id,{task,keys:new Map()});
+      const record=quests.get(task.id);
+      if(!record.task.nameKo&&task.nameKo)record.task=task;
+      record.keys.set(item.id,item);
+    }
+  }
+  const entries=[...quests.values()].sort((a,b)=>
+    (a.task.nameKo||a.task.name||a.task.id).localeCompare(b.task.nameKo||b.task.name||b.task.id,'ko')
+  );
+  counter.textContent=`퀘스트 ${entries.length}개`;
+  empty.hidden=entries.length>0;
+  if(!entries.length){
+    empty.textContent=items.length
+      ? '현재 데이터에 이 맵의 열쇠와 연결된 퀘스트가 없습니다. 퀘스트 정보를 불러오지 못했을 수도 있으니 데이터 새로고침을 확인해 주세요.'
+      : '열쇠 데이터를 불러오면 관련 퀘스트가 표시됩니다.';
+    return;
+  }
+  const fragment=document.createDocumentFragment();
+  for(const entry of entries){
+    const card=questPanel(entry.task);
+    card.classList.add('atlas-quest-card');
+    const linked=el('div','atlas-quest-linked');
+    linked.append(el('div','atlas-quest-linked-title',`관련 열쇠 · ${entry.keys.size}개`));
+    const buttons=el('div','atlas-quest-key-buttons');
+    for(const item of [...entry.keys.values()].sort((a,b)=>(a.nameKo||a.nameEn).localeCompare(b.nameKo||b.nameEn,'ko'))){
+      const key=el('button','atlas-quest-key',(getOwned()[item.id]?'✓ ':'⚿ ')+(item.nameKo||item.nameEn));
+      key.type='button';key.title='열쇠 상세 정보 보기';
+      key.addEventListener('click',()=>showDetail(item));
+      buttons.append(key);
+    }
+    linked.append(buttons);card.append(linked);fragment.append(card);
+  }
+  container.append(fragment);
+}
 function renderAtlas(){
   const root=$('atlas');if(!root)return;
-  const sel=$('atlas-map');if(sel.value!==atlasMap){if([...sel.options].some(o=>o.value===atlasMap))sel.value=atlasMap;}
+  const sel=$('atlas-map');
+  if(sel.value!==atlasMap&&[...sel.options].some(option=>option.value===atlasMap))sel.value=atlasMap;
   $('atlas-map-label').textContent=atlasMap;
   $('atlas-external').href=mapUrl(atlasMap)||'https://tarkov.dev/maps';
   setAtlasImage(atlasMap);
-  const points=atlasPoints(atlasMap);
-  const keyIds=new Set(points.map(p=>p.item.id));
-  $('atlas-count').textContent=`확인된 좌표 ${points.length}곳 · 열쇠 ${keyIds.size}종`;
-  const plot=$('atlas-plot');plot.replaceChildren();
-  const keyList=$('atlas-keys');keyList.replaceChildren();
-  $('atlas-empty').hidden=points.length>0;
-  renderAtlasOverlay(points);
-  if(!points.length){$('atlas-empty').textContent=items.length?'현재 데이터에서 이 맵의 잠긴 문 좌표가 확인되지 않았어요.':'열쇠 데이터 로딩 후 위치가 표시돼요.';return;}
-  const bounds=atlasBounds(points);const width=410,height=264,left=28,top=24;
-  const px=x=>left+(x-bounds.minX)/(bounds.maxX-bounds.minX)*width;
-  const py=z=>top+height-(z-bounds.minZ)/(bounds.maxZ-bounds.minZ)*height;
-  for(let i=0;i<=4;i++){
-    const x=left+width*i/4,z=top+height*i/4;
-    plot.append(createSvg('line',{x1:x,y1:top,x2:x,y2:top+height,class:'atlas-gridline'}));
-    plot.append(createSvg('line',{x1:left,y1:z,x2:left+width,y2:z,class:'atlas-gridline'}));
-  }
-  const axisTitle=createSvg('text',{x:left,y:13,class:'atlas-axis'});axisTitle.textContent='좌표 분포도 · X/Z';plot.append(axisTitle);
-  const axisX=createSvg('text',{x:left,y:311,class:'atlas-axis'});axisX.textContent=`X ${Math.round(bounds.minX)} ~ ${Math.round(bounds.maxX)}`;plot.append(axisX);
-  const axisZ=createSvg('text',{x:308,y:311,class:'atlas-axis'});axisZ.textContent=`Z ${Math.round(bounds.minZ)} ~ ${Math.round(bounds.maxZ)}`;plot.append(axisZ);
-  // 3000+ markers can slow browsers; keep plot performant without hiding the count.
-  for(const {item,pos} of points.slice(0,700)){
-    const isActive=item.id===atlasHighlightedId;
-    const marker=createSvg('circle',{cx:px(pos.x).toFixed(2),cy:py(pos.z).toFixed(2),r:isActive?7:5,tabindex:0,role:'button',class:'atlas-marker'+(isActive?' selected':'')});
-    const title=createSvg('title');title.textContent=`${item.nameKo||item.nameEn} · X ${pos.x} · Z ${pos.z}`;marker.append(title);
-    const activate=()=>{atlasHighlightedId=item.id;renderAtlas();showDetail(item);};
-    marker.addEventListener('click',activate);
-    marker.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();activate();}});
-    plot.append(marker);
-  }
-  if(points.length>700){const warning=createSvg('text',{x:left,y:300,class:'atlas-axis'});warning.textContent=`처음 700개 점 표시 / 전체 ${points.length}개`;plot.append(warning);}
-  const seen=new Set();
-  for(const {item,pos} of points){
-    if(seen.has(item.id))continue;seen.add(item.id);
-    const button=el('button','atlas-key'+(item.id===atlasHighlightedId?' selected':''));button.type='button';
-    button.append(el('span','',item.nameKo||item.nameEn),el('small','',`X ${Number(pos.x).toFixed(1)} · Z ${Number(pos.z).toFixed(1)}`));
-    button.addEventListener('click',()=>{atlasHighlightedId=item.id;renderAtlas();showDetail(item);});
-    keyList.append(button);
-  }
+  renderAtlasOverlay(atlasPoints(atlasMap));
+  renderAtlasQuests(atlasMap);
 }
+
 function link(url,title,cls) {
   const a=el('a',cls,title); a.href=url; a.target='_blank'; a.rel='noopener noreferrer'; return a;
 }
@@ -804,7 +814,7 @@ async function load(force=false){
 }
 $('atlas-map').addEventListener('change',event=>{atlasMap=event.target.value;atlasHighlightedId=null;renderAtlas();});
 $('atlas-image').addEventListener('load',()=>{const img=$('atlas-image');if(img.naturalWidth>0){img.hidden=false;$('atlas-map-content').hidden=false;$('atlas-image-fallback').hidden=true;$('atlas-overlay').hidden=!$('atlas-show-pins').checked||!MAP_CALIBRATIONS[atlasMap];}});
-$('atlas-image').addEventListener('error',()=>{const img=$('atlas-image');img.hidden=true;$('atlas-map-content').hidden=true;$('atlas-overlay').hidden=true;$('atlas-image-fallback').hidden=false;$('atlas-image-fallback').textContent='지도를 불러오지 못했어요. 외부 지도 링크나 우측 좌표 분포도를 사용해 주세요.';});
+$('atlas-image').addEventListener('error',()=>{const img=$('atlas-image');img.hidden=true;$('atlas-map-content').hidden=true;$('atlas-overlay').hidden=true;$('atlas-image-fallback').hidden=false;$('atlas-image-fallback').textContent='지도를 불러오지 못했어요. 외부 지도 링크를 확인해 주세요.';});
 $('atlas-zoom').addEventListener('input',event=>{
   const frame=$('atlas-frame'),content=$('atlas-map-content');
   const centerX=(frame.scrollLeft+frame.clientWidth/2)/Math.max(1,content.scrollWidth);
