@@ -1,8 +1,8 @@
 'use strict';
-// Tarkov Key Guide v0.4. GitHub Pages, no account, no backend.
+// Tarkov Key Guide v0.4.1. GitHub Pages, no account, no backend.
 const API = 'https://api.tarkov.dev/graphql';
 const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // DO NOT CHANGE: existing users' checkmarks.
-const CACHE_KEY = 'tarkov-key-guide-items-v4';
+const CACHE_KEY = 'tarkov-key-guide-items-v4'; // Cache format unchanged: preserve working 0.4 data
 const OLD_CACHE_KEYS = ['tarkov-key-guide-items-v3', 'tarkov-key-guide-items-v2'];
 const queryEnglish = `query { items(types:[keys],lang:en) { id name shortName iconLink wikiLink description usedInTasks { id name } properties { ... on ItemPropertiesKey { uses } } } }`;
 const queryKorean = `query { items(types:[keys],lang:ko) { id name shortName usedInTasks { id name } } }`;
@@ -108,25 +108,36 @@ function mapUrl(name) { const slug=mapSlugs[name]; return slug ? `https://tarkov
 function link(url,title,cls) {
   const a=el('a',cls,title); a.href=url; a.target='_blank'; a.rel='noopener noreferrer'; return a;
 }
+// Navigation is intentionally independent of API/data loading.
+// A temporary tarkov.dev error must never hide the map selection UI.
+const ALWAYS_VISIBLE_MAPS = ['세관','팩토리','우드','해안선','인터체인지','리저브','스트리트','등대','연구소','그라운드 제로','미궁','터미널','아이스브레이커'];
 function updateFilters() {
   const dropdown=$('map'), previous=dropdown.value;
-  dropdown.replaceChildren(new Option('전체 맵','all'));
   const counts = new Map();
   for (const item of items) for (const map of displayMaps(item)) counts.set(map,(counts.get(map)||0)+1);
-  const sorted=[...counts].sort(([a],[b])=>a.localeCompare(b,'ko'));
-  for (const [name,count] of sorted) dropdown.add(new Option(`${name} (${count})`,name));
-  if(counts.has(previous)) dropdown.value=previous;
-  const shortcuts=$('map-shortcuts'); shortcuts.replaceChildren();
-  if (!items.length) return;
-  const list=[['전체','all'], ...sorted.sort((a,b)=>b[1]-a[1]).slice(0,8).map(([name])=>[name,name])];
-  for (const [label,value] of list) {
-    const button=el('button','map-shortcut'+(dropdown.value===value?' active':''),label);
-    button.type='button'; button.setAttribute('aria-pressed',String(dropdown.value===value));
+  const known=[...new Set([...ALWAYS_VISIBLE_MAPS,...counts.keys()])];
+  dropdown.replaceChildren(new Option('전체 맵','all'));
+  for (const name of known) dropdown.add(new Option(items.length?`${name} (${counts.get(name)||0})`:name,name));
+  dropdown.value=known.includes(previous)?previous:'all';
+  const shortcuts=$('map-shortcuts');
+  shortcuts.replaceChildren();
+  for (const [label,value] of [['전체','all'],...known.map(name=>[name,name])]) {
+    const button=el('button','map-shortcut',label);
+    button.type='button';button.dataset.map=value;
+    button.setAttribute('aria-pressed',String(dropdown.value===value));
     button.addEventListener('click',()=>{dropdown.value=value;render();});
     shortcuts.append(button);
   }
+  updateShortcutSelection();
 }
-function updateShortcutSelection(){ for (const b of $('map-shortcuts').children) { const active=b.textContent===('전체'===b.textContent?'전체':$('map').value) && (b.textContent!=='전체'||$('map').value==='all'); b.classList.toggle('active',active); b.setAttribute('aria-pressed',String(active)); } }
+function updateShortcutSelection() {
+  const value=$('map').value;
+  for (const button of $('map-shortcuts').children) {
+    const active=button.dataset.map===value;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',String(active));
+  }
+}
 function matches(item,search,map,filter,type,purpose,owned) {
   if(map!=='all' && !displayMaps(item).includes(map))return false;
   if(filter==='owned' && !owned[item.id])return false;
@@ -220,7 +231,7 @@ function render(){
   const percent=items.length?Math.round(100*ownedCount/items.length):0;$('stat-percent').textContent=percent+'%';$('progress-bar').style.width=percent+'%';
   $('result-count').textContent=`${visible.length.toLocaleString('ko-KR')}개 표시`;
   const fragment=document.createDocumentFragment();
-  if(!visible.length)fragment.append(el('p','empty',items.length?'검색 조건에 맞는 열쇠가 없습니다.':'데이터가 아직 없습니다.'));
+  if(!visible.length)fragment.append(el('p','empty',items.length?'선택한 맵에 확인된 열쇠가 없거나 맵 연결 데이터가 누락되었습니다. 다른 맵이나 전체를 선택해 보세요.':'열쇠 데이터가 아직 없습니다. 데이터 연결 상태를 확인해 주세요.'));
   else for(const item of visible)fragment.append(cardFor(item,owned));
   $('cards').replaceChildren(fragment);
   updateShortcutSelection();
@@ -270,7 +281,7 @@ async function load(force=false){
   }
   items=fresh;updateFilters();render();writeJSON(CACHE_KEY,{version:4,timestamp:Date.now(),items});maybeOpenSharedItem();
   const mapped=items.filter(x=>x.mapNames.length).length,inferred=items.filter(x=>!x.mapNames.length&&x.hint).length,coordinates=items.filter(x=>x.lockPositions.length).length;
-  const warnings=[];if(ko.status==='rejected')warnings.push('한국어 데이터 갱신 실패');if(maps.status==='rejected')warnings.push('지도 데이터 갱신 실패');
+  const warnings=[];if(ko.status==='rejected')warnings.push('한국어 데이터 갱신 실패');if(maps.status==='rejected')warnings.push('맵 정보 API 오류: '+String(maps.reason?.message||'연결 실패'));
   for(const response of [en,ko,maps])if(response.status==='fulfilled'&&response.value.warning)warnings.push(response.value.warning);
   status(`${items.length}개 · API 맵 확인 ${mapped}개 · 이름 단서 ${inferred}개 · 문 좌표 ${coordinates}개${warnings.length?' · '+[...new Set(warnings)].join(' / '):''}`);
 }
@@ -296,4 +307,6 @@ $('import').addEventListener('change',async event=>{
 });
 window.addEventListener('storage',event=>{if(event.key===OWNED_KEY)render();});
 window.addEventListener('popstate',()=>{if($('detail').open)$('detail').close();maybeOpenSharedItem();});
+updateFilters(); // Map buttons appear immediately, even before the API responds.
+render();
 load();

@@ -10,3 +10,14 @@
 .coordinates{display:grid;gap:8px}.coord-row{display:flex;align-items:center;flex-wrap:wrap;gap:9px;background:#202c24;border:1px solid var(--border);border-radius:7px;padding:9px}.coord-row strong{font-size:12px;min-width:64px}.coord-row code{color:#e8d6ab;font-size:12px;overflow-wrap:anywhere}.quest-list{display:grid;gap:8px;list-style:none!important;margin:0;padding:0!important}.quest-list li{border:1px solid var(--border);padding:10px;border-radius:6px}.quest-list strong{font-size:13px}.quest-list small{display:block;color:var(--muted);margin-top:2px}
 .detail-actions{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.detail-action-link,.share-btn{display:inline-flex;align-items:center;border:1px solid #657b65;border-radius:6px;padding:10px 13px;font-size:12px;min-height:38px;text-decoration:none;background:#27392c;color:#eddfa9}.share-btn{font:inherit;font-size:12px}.detail-action-link:hover,.share-btn:hover{border-color:var(--gold)}
 @media(max-width:550px){.map-shortcuts{flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px;margin-right:-15px}.map-shortcut{white-space:nowrap;flex:none}.section-head{align-items:flex-start}.section-head span{white-space:nowrap}.hint-chip{font-size:10px}.location-row{gap:7px}.map-link{margin-left:0}}
+
+/* v0.4.1: conspicuous always-visible map selector */
+.version-pill{display:inline-block;margin-left:10px;padding:4px 8px;background:#a58d56;color:#101512;border-radius:5px;font-weight:800;letter-spacing:.5px}
+.map-nav-section{margin:22px 0 0;padding:15px 16px 13px;border:1px solid #59674d;border-radius:10px;background:linear-gradient(135deg,#243329,#171e19)}
+.map-nav-title{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.map-nav-title strong{font-size:13px;letter-spacing:1.2px;color:#f2dba5}
+.map-nav-title span{font-size:11px;color:#b7c7b8}
+.map-nav-section .map-shortcuts{margin:12px 0 0}
+.map-nav-section .map-shortcut{background:#17241b;border-color:#65785f;color:#e0e8d8;font-weight:650}
+.map-nav-section .map-shortcut.active{background:#d3bd8a;border-color:#decf9d;color:#141c15;font-weight:850}
+@media(max-width:550px){.map-nav-section{padding:12px}.map-nav-title span{line-height:1.5}.map-nav-section .map-shortcuts{margin-right:-12px}}
