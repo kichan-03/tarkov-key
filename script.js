@@ -1,12 +1,11 @@
 'use strict';
-// Tarkov Key Guide v0.2 — GitHub Pages (no backend, no login).
+// Tarkov Key Guide v0.3 — GitHub Pages (no backend, no login).
 const API = 'https://api.tarkov.dev/graphql';
 const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // Keep old key; v0.1 ownership persists.
-const CACHE_KEY = 'tarkov-key-guide-items-v2';
-const MAX_CACHE_AGE = 24 * 60 * 60 * 1000;
-const queryEnglish = `query { items(types:[keys],lang:en) { id name shortName iconLink wikiLink description usedInTasks { id name } } }`;
-const queryKorean = `query { items(types:[keys],lang:ko) { id name shortName } }`;
-const queryMaps = `query { maps { name normalizedName accessKeys { id } locks { key { id } } } }`;
+const CACHE_KEY = 'tarkov-key-guide-items-v3';
+const queryEnglish = `query { items(types:[keys],lang:en) { id name shortName iconLink wikiLink description usedInTasks { id name } properties { ... on ItemPropertiesKey { uses } } } }`;
+const queryKorean = `query { items(types:[keys],lang:ko) { id name shortName usedInTasks { id name } } }`;
+const queryMaps = `query { maps { name normalizedName accessKeys { id } locks { key { id } position { x y z } } } }`;
 const $ = id => document.getElementById(id);
 const labels = { 'Customs':'세관', 'Factory':'팩토리', 'Factory (Night)':'야간 팩토리', 'Woods':'우드', 'Shoreline':'해안선', 'Interchange':'인터체인지', 'Reserve':'리저브', 'Lighthouse':'등대', 'Streets of Tarkov':'스트리트', 'The Lab':'연구소', 'Ground Zero':'그라운드 제로', 'Terminal':'터미널', 'The Labyrinth':'미궁', 'Icebreaker':'아이스브레이커' };
 let items = [];
@@ -41,10 +40,19 @@ function keycardCheck(item){return /keycard|key card|access card|카드|키카�
 function makeItems(english,korean,maps){
   const ko = new Map((korean||[]).filter(x=>x?.id).map(x=>[x.id,x]));
   const assigned = new Map();
+  const positions = new Map();
   for(const m of (maps||[])){
     const mapName=koreanMapName(m?.name||m?.normalizedName);
     if(!mapName)continue;
     const ids=[...(m?.locks||[]).map(x=>x?.key?.id),...(m?.accessKeys||[]).map(x=>x?.id)];
+    for (const lock of (m?.locks||[])) {
+      const id=lock?.key?.id, pos=lock?.position;
+      if(!id || !pos || ![pos.x,pos.y,pos.z].every(Number.isFinite)) continue;
+      if(!positions.has(id)) positions.set(id,[]);
+      const list=positions.get(id);
+      const key=`${mapName}|${pos.x}|${pos.y}|${pos.z}`;
+      if(!list.some(entry=>entry.key===key)) list.push({key,mapName,x:pos.x,y:pos.y,z:pos.z});
+    }
     for(const id of ids){if(!id)continue; if(!assigned.has(id))assigned.set(id,new Set());assigned.get(id).add(mapName);}
   }
   const dedup=new Map();
@@ -54,8 +62,9 @@ function makeItems(english,korean,maps){
     const en=(x.name||x.shortName||x.id).trim();
     const nameKo=(koItem?.name||'').trim();
     const mapNames=[...(assigned.get(x.id)||[])].sort((a,b)=>a.localeCompare(b,'ko'));
-    const tasks=(Array.isArray(x.usedInTasks)?x.usedInTasks:[]).filter(t=>t?.id).map(t=>({id:t.id,name:t.name||'이름 미확인'}));
-    const item={id:x.id,nameEn:en,nameKo:nameKo&&nameKo!==en?nameKo:'',shortNameEn:x.shortName||'',shortNameKo:koItem?.shortName||'',iconLink:x.iconLink||'',wikiLink:x.wikiLink||'',description:x.description||'',mapNames,tasks};
+    const koTasks = new Map((koItem?.usedInTasks||[]).filter(t=>t?.id).map(t=>[t.id,t.name]));
+    const tasks=(Array.isArray(x.usedInTasks)?x.usedInTasks:[]).filter(t=>t?.id).map(t=>({id:t.id,name:t.name||'이름 미확인',nameKo:koTasks.get(t.id)||''}));
+    const item={id:x.id,nameEn:en,nameKo:nameKo&&nameKo!==en?nameKo:'',shortNameEn:x.shortName||'',shortNameKo:koItem?.shortName||'',iconLink:x.iconLink||'',wikiLink:x.wikiLink||'',description:x.description||'',mapNames,tasks,lockPositions:positions.get(x.id)||[],uses:Number.isInteger(x.properties?.uses)?x.properties.uses:null};
     item.keycard=keycardCheck(item);
     dedup.set(x.id,item);
   }
@@ -90,7 +99,17 @@ function showDetail(x){
   const addSection=(heading,content)=>{const s=text('section','detail-section','');s.append(text('h3','',heading));s.append(content);body.append(s);};
   addSection('사용 맵',text('p','',x.mapNames.length?x.mapNames.join(', '):'공개 데이터에 맵 연결 정보가 없습니다. (확인 필요)'));
   addSection('종류',text('p','',x.keycard?'키카드 / 출입 카드':'열쇠'));
-  if(x.tasks.length){const ul=document.createElement('ul');for(const t of x.tasks)ul.append(text('li','',t.name));addSection('관련 퀘스트',ul);}
+  if(Number.isInteger(x.uses)) addSection('사용 횟수',text('p','',x.uses===0?'무제한 또는 미설정 (게임 내 확인 필요)':`${x.uses}회`));
+  if(x.lockPositions?.length){
+    const ul=document.createElement('ul');
+    for(const pos of x.lockPositions.slice(0,40)){
+      const fmt=n=>Number(n).toFixed(1).replace(/\.0$/,'');
+      ul.append(text('li','',`${pos.mapName}: X ${fmt(pos.x)} · Y ${fmt(pos.y)} · Z ${fmt(pos.z)}`));
+    }
+    addSection('잠긴 문 위치 좌표 (API 제공)',ul);
+    addSection('좌표 안내',text('p','','좌표는 게임 내 월드 좌표가 아닌 지도용 좌표계일 수 있습니다. 상세 출입구 확인에는 위키를 참고하세요.'));
+  }
+  if(x.tasks.length){const ul=document.createElement('ul');for(const t of x.tasks)ul.append(text('li','',t.nameKo&&t.nameKo!==t.name?`${t.nameKo} (${t.name})`:t.name));addSection('관련 퀘스트',ul);}
   else addSection('관련 퀘스트',text('p','','API에 연결된 퀘스트 정보가 없습니다.'));
   if(x.description)addSection('아이템 설명 (영문)',text('p','',x.description));
   if(x.wikiLink&&x.wikiLink.startsWith('https://')){
@@ -106,6 +125,7 @@ function cardFor(x,owned){
   const image=text('div','card-image','');if(x.iconLink){const img=document.createElement('img');img.loading='lazy';img.alt='';img.src=x.iconLink;image.append(img);}else image.append(text('span','no-image','⚿'));card.append(image);
   card.append(text('h3','',x.nameKo||x.nameEn));card.append(text('div','subname',x.nameKo?x.nameEn:(x.shortNameEn||' ')));
   card.append(text('div','map-chip',x.mapNames.length?x.mapNames.join(' · '):'사용 맵: 확인 필요'));
+  if(x.lockPositions?.length) card.append(text('div','position-hint',`⌖ 잠긴 문 위치 ${x.lockPositions.length}곳 확인`));
   const bottom=text('div','card-bottom','');const label=text('label','owned-label','');const check=document.createElement('input');check.type='checkbox';check.checked=!!owned[x.id];check.setAttribute('aria-label',`${x.nameKo||x.nameEn} 보유 체크`);
   check.addEventListener('change',()=>{const next={...getOwned()};if(check.checked)next[x.id]=true;else delete next[x.id];if(!setOwned(next))$('status').textContent='저장 공간을 사용할 수 없습니다. 브라우저 설정을 확인하세요.';render();});
   label.append(check,document.createTextNode('보유 중'));bottom.append(label);
@@ -136,7 +156,7 @@ function updateStatus(message){$('status').textContent=message;}
 async function load(force=false){
   const sequence=++loadSequence;
   const cached=readJSON(CACHE_KEY,null);
-  if(!force&&cached?.version===2&&Array.isArray(cached.items)&&cached.items.length){items=cached.items;lastApiTimestamp=cached.timestamp||null;updateFilters();render();updateStatus('저장된 목록을 표시 중입니다. 최신 정보 확인 중...');}
+  if(!force&&cached?.version===3&&Array.isArray(cached.items)&&cached.items.length){items=cached.items;lastApiTimestamp=cached.timestamp||null;updateFilters();render();updateStatus('저장된 목록을 표시 중입니다. 최신 정보 확인 중...');}
   else updateStatus('tarkov.dev에서 열쇠를 불러오는 중...');
   const [en,ko,maps]=await Promise.allSettled([graphql(queryEnglish),graphql(queryKorean),graphql(queryMaps)]);
   if(sequence!==loadSequence)return;
@@ -150,9 +170,10 @@ async function load(force=false){
   const fresh=makeItems(en.value.items,koList,mapsList);
   if(!fresh.length){updateStatus('API에서 열쇠 목록이 0개로 반환되어 기존 데이터를 유지합니다.');return;}
   items=fresh;lastApiTimestamp=Date.now();updateFilters();render();
-  writeJSON(CACHE_KEY,{version:2,timestamp:lastApiTimestamp,items});
+  writeJSON(CACHE_KEY,{version:3,timestamp:lastApiTimestamp,items});
   const notes=[];if(ko.status==='rejected')notes.push('한국어 이름 일부 미제공');if(maps.status==='rejected')notes.push('맵 연결 정보 미제공');
-  updateStatus(`열쇠 ${items.length}개 불러옴 · 출처: tarkov.dev${notes.length?' · '+notes.join(' · '):''}`);
+  const mapped=items.filter(x=>x.mapNames.length).length, positioned=items.filter(x=>x.lockPositions.length).length;
+  updateStatus(`열쇠·키카드 ${items.length}개 · 맵 연결 ${mapped}개 · 문 좌표 ${positioned}개 · 출처: tarkov.dev${notes.length?' · '+notes.join(' · '):''}`);
 }
 for(const id of ['search','map','filter','type','purpose','sort'])$(id).addEventListener(id==='search'?'input':'change',render);
 $('refresh').addEventListener('click',()=>load(true));
