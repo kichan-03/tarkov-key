@@ -1,0 +1,2 @@
+# tarkov-key
+EFT key
