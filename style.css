@@ -117,3 +117,17 @@
 @media(max-width:550px){.room-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.room-cell:first-child{grid-column:1/-1}.coord-row{align-items:flex-start;flex-wrap:wrap}.coord-jump{width:100%}.quest-summary{padding:11px 10px}.quest-toggle-label{font-size:10px}}
 
 .reset-filter-btn{display:block;margin:16px auto 0;padding:10px 14px;border:1px solid #a4bc91;background:#2d4632;color:#fff;border-radius:6px;font-weight:700}
+
+/* v0.7.2 – quests associated with keys for the selected map */
+.atlas-quest-pane{display:flex;flex-direction:column;gap:9px}
+.atlas-quest-note{margin:0 0 4px}
+.atlas-quest-list{max-height:530px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:3px;scrollbar-color:#6d805e #172018;scrollbar-width:thin}
+.atlas-quest-card{flex:none}
+.atlas-quest-linked{padding:10px 13px 12px;border-top:1px solid #435244;background:#19261e}
+.atlas-quest-linked-title{font-size:11px;color:#c5cdbf;margin-bottom:7px}
+.atlas-quest-key-buttons{display:flex;gap:7px;flex-wrap:wrap}
+.atlas-quest-key{font:inherit;font-size:11px;text-align:left;color:#e6e8db;background:#293a2e;border:1px solid #5c735c;border-radius:5px;padding:7px 9px;cursor:pointer;max-width:100%;overflow-wrap:anywhere}
+.atlas-quest-key:hover,.atlas-quest-key:focus-visible{border-color:var(--gold);outline-color:var(--gold)}
+.atlas-quest-empty{padding:42px 14px;color:var(--muted);font-size:13px;line-height:1.7;text-align:center;border:1px dashed var(--border);border-radius:8px}
+@media(max-width:920px){.atlas-quest-list{max-height:430px}}
+@media(max-width:550px){.atlas-quest-list{max-height:390px}.atlas-quest-linked{padding:9px}.atlas-quest-key{font-size:11px}}
