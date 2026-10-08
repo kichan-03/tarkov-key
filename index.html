@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#131a18">
   <meta name="description" content="Escape from Tarkov 열쇠 및 키카드 도감. 맵별 검색과 브라우저별 보유 기록 관리.">
   <title>Tarkov Key Guide | 타르코프 열쇠 도감</title>
-  <link rel="stylesheet" href="style.css?v=041">
-  <script src="script.js?v=041" defer></script>
+  <link rel="stylesheet" href="style.css?v=050">
+  <script src="script.js?v=050" defer></script>
 </head>
 <body>
   <header class="hero">
     <div class="shell">
-      <div class="eyebrow">ESCAPE FROM TARKOV · UNOFFICIAL COMMUNITY TOOL <span class="version-pill">v0.4.1</span></div>
+      <div class="eyebrow">ESCAPE FROM TARKOV · UNOFFICIAL COMMUNITY TOOL <span class="version-pill">v0.5</span></div>
       <h1><span class="keyicon">⌘</span> TARKOV <em>KEY GUIDE</em></h1>
       <p>모든 맵의 열쇠와 키카드를 찾아보고, 잠긴 문 위치, 퀘스트 용도, 내 보유 현황을 한곳에서 확인하세요.</p>
       <div class="stats" aria-label="열쇠 보유 통계">
@@ -36,6 +36,26 @@
       <div class="panel-bottom"><div id="status" role="status" aria-live="polite">열쇠 데이터를 준비 중...</div><button id="refresh" class="small-button" type="button">↻ 데이터 새로고침</button></div>
     </section>
     <section class="map-nav-section" aria-label="맵 선택"><div class="map-nav-title"><strong>MAP SELECT · 맵 선택</strong><span>맵 이름은 항상 표시됩니다. 데이터가 없으면 결과가 비어 있을 수 있어요.</span></div><nav class="map-shortcuts" aria-label="전체 맵 선택" id="map-shortcuts"></nav></section>
+    <section class="atlas panel" id="atlas" aria-label="맵 이미지와 열쇠 위치 탐색">
+      <div class="atlas-heading">
+        <div><div class="atlas-overline">LOCATION ATLAS · v0.5</div><h2>맵 보기 <span id="atlas-map-label">세관</span></h2><p>실제 지도 미리보기와 확인된 잠긴 문 좌표를 나란히 볼 수 있어요.</p></div>
+        <div class="atlas-actions"><label for="atlas-map">지도 선택</label><select id="atlas-map" aria-label="지도 미리보기 선택"></select></div>
+      </div>
+      <div class="atlas-columns">
+        <div class="atlas-pane">
+          <div class="atlas-pane-head"><strong>지도 미리보기</strong><a id="atlas-external" href="https://tarkov.dev/map/customs" target="_blank" rel="noopener noreferrer">tarkov.dev에서 크게 보기 ↗</a></div>
+          <div id="atlas-frame" class="atlas-frame"><img id="atlas-image" alt="선택한 맵 미리보기" loading="lazy"><div id="atlas-image-fallback" class="atlas-image-fallback" hidden>이 맵의 내장 미리보기 이미지는 없거나 불러오지 못했어요. 위의 외부 지도 링크로 확인하세요.</div></div>
+          <div class="atlas-zoom"><label for="atlas-zoom">이미지 확대</label><input type="range" id="atlas-zoom" min="100" max="250" step="25" value="100"><output id="atlas-zoom-value" for="atlas-zoom">100%</output></div>
+          <p class="atlas-note">지도 이미지 제공: tarkov.dev. 큰 지도는 확대 후 스크롤할 수 있어요. 지도에서 사용하는 층별·방별 구역은 외부 지도에서 확인하세요.</p>
+        </div>
+        <div class="atlas-pane">
+          <div class="atlas-pane-head"><strong>잠긴 문 좌표 분포</strong><span id="atlas-count">좌표 0개</span></div>
+          <div class="atlas-plot-wrap"><svg id="atlas-plot" viewBox="0 0 460 320" role="img" aria-label="확인된 문 위치의 X/Z 좌표 분포도"></svg><p id="atlas-empty" class="atlas-empty">좌표 데이터를 불러오고 있어요.</p></div>
+          <p class="atlas-note"><strong>주의:</strong> 우측 좌표 분포도는 실제 지도 이미지에 정렬된 오버레이가 아닙니다. API 좌표를 독립적으로 시각화한 것입니다. 점을 누르면 해당 열쇠의 상세 정보가 열립니다.</p>
+          <div id="atlas-keys" class="atlas-key-list" aria-label="이 맵에서 위치가 확인된 열쇠 목록"></div>
+        </div>
+      </div>
+    </section>
     <div class="section-head"><div><h2>KEY INVENTORY</h2><p class="section-sub">확인된 맵 정보와 열쇠 이름에서 읽은 위치 단서를 구분해 표시합니다.</p></div><span id="result-count"></span></div>
     <div id="cards" class="grid" aria-live="off"></div>
     <section class="backup panel">
@@ -44,6 +64,6 @@
     </section>
   </main>
   <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-head"><strong id="detail-title">KEY DETAILS</strong><button id="close-detail" aria-label="닫기" type="button">✕</button></div><div id="detail-body"></div></dialog>
-  <footer class="shell"><span>비공식 팬 제작 도감 · 아이템/지도 데이터 출처: <a href="https://tarkov.dev/" target="_blank" rel="noopener noreferrer">tarkov.dev</a></span><span>보유 기록은 서버로 전송하지 않습니다. · v0.4.1</span></footer>
+  <footer class="shell"><span>비공식 팬 제작 도감 · 아이템/지도 데이터 출처: <a href="https://tarkov.dev/" target="_blank" rel="noopener noreferrer">tarkov.dev</a></span><span>보유 기록은 서버로 전송하지 않습니다. · v0.5</span></footer>
 </body>
 </html>

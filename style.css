@@ -21,3 +21,35 @@
 .map-nav-section .map-shortcut{background:#17241b;border-color:#65785f;color:#e0e8d8;font-weight:650}
 .map-nav-section .map-shortcut.active{background:#d3bd8a;border-color:#decf9d;color:#141c15;font-weight:850}
 @media(max-width:550px){.map-nav-section{padding:12px}.map-nav-title span{line-height:1.5}.map-nav-section .map-shortcuts{margin-right:-12px}}
+
+/* v0.5 location atlas */
+.atlas{margin-top:18px!important;scroll-margin-top:18px;padding:22px!important;background:linear-gradient(160deg,#1b2a21,#151e19 70%)}
+.atlas-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+.atlas-overline{color:var(--gold);letter-spacing:2px;font-size:11px;font-weight:800}
+.atlas-heading h2{font-size:25px;margin:7px 0 4px}.atlas-heading h2 span{color:var(--gold)}
+.atlas-heading p{color:var(--muted);font-size:12px;margin:0;line-height:1.5}
+.atlas-actions{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px;min-width:175px}
+.atlas-actions select{background:var(--surface2);color:var(--ink);padding:10px 14px;border:1px solid #61735e;border-radius:5px;max-width:220px}
+.atlas-columns{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:17px}
+.atlas-pane{background:#111a15;border:1px solid #314238;border-radius:9px;min-width:0;padding:12px}
+.atlas-pane-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;min-height:32px;margin-bottom:9px}
+.atlas-pane-head a{font-size:11px;color:var(--gold);text-decoration:underline;text-underline-offset:3px}
+.atlas-pane-head span{font-size:11px;color:var(--muted)}
+.atlas-frame{height:360px;background:#090e0b;border:1px solid #3b4b3e;overflow:auto;display:block;position:relative;border-radius:7px;text-align:center}
+.atlas-frame img{display:block;width:100%;height:auto;max-width:none;min-width:100%;margin:0 auto}
+.atlas-image-fallback{padding:55px 20px;font-size:13px;line-height:1.8;color:var(--muted)}
+.atlas-zoom{display:flex;align-items:center;gap:10px;margin:9px 0;color:var(--muted);font-size:12px}
+.atlas-zoom input{flex:1;min-width:0;accent-color:var(--gold)}.atlas-zoom output{min-width:40px;text-align:right}
+.atlas-note{font-size:11px;line-height:1.65;color:var(--muted);margin:9px 0 0}.atlas-note strong{color:var(--gold)}
+.atlas-plot-wrap{height:360px;border:1px solid #3b4b3e;border-radius:7px;background:#111914;position:relative;overflow:hidden}
+#atlas-plot{width:100%;height:100%;display:block}.atlas-gridline{stroke:#3e5041;stroke-opacity:.6;stroke-width:1}.atlas-axis{fill:#a7b6a3;font-size:11px}
+.atlas-marker{fill:#d8bf80;stroke:#101813;stroke-width:1.7;cursor:pointer;outline:none}.atlas-marker:hover,.atlas-marker:focus,.atlas-marker.selected{fill:#f4e2ae;stroke:#fff;stroke-width:2.5}
+.atlas-empty{position:absolute;top:42%;width:90%;left:5%;text-align:center;font-size:13px;color:var(--muted);line-height:1.6}
+.atlas-key-list{max-height:170px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;margin-top:11px}
+.atlas-key{display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;background:#223027;border:1px solid #3e5445;color:var(--ink);border-radius:5px;padding:8px 11px;font-size:12px}
+.atlas-key small{font-size:10px;white-space:nowrap;color:var(--muted)}.atlas-key:hover,.atlas-key.selected{border-color:var(--gold);background:#334435}
+.atlas-link{display:block;background:#344536;border:1px solid var(--gold);color:var(--gold);border-radius:6px;padding:9px 13px;margin-top:10px;font-size:13px}
+@media(max-width:920px){.atlas-columns{grid-template-columns:1fr}.atlas-frame,.atlas-plot-wrap{height:330px}}
+@media(max-width:550px){.atlas{padding:12px!important}.atlas-heading{flex-direction:column;align-items:stretch;gap:13px}.atlas-actions select{max-width:none}.atlas-pane{padding:9px}.atlas-frame,.atlas-plot-wrap{height:255px}.atlas-pane-head{font-size:12px}.atlas-key{flex-direction:column;align-items:flex-start}.atlas-key small{white-space:normal}}
+/* Respect the hidden attribute even when component CSS specifies display:block. */
+.atlas-frame [hidden], .atlas-plot-wrap [hidden] {display:none!important}
