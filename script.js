@@ -1,5 +1,5 @@
 'use strict';
-// Tarkov Key Guide v0.6. GitHub Pages, no account, no backend.
+// Tarkov Key Guide v0.7. GitHub Pages, no account, no backend.
 const API = 'https://api.tarkov.dev/graphql';
 const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // DO NOT CHANGE: existing users' checkmarks.
 const CACHE_KEY = 'tarkov-key-guide-items-v4'; // Cache format unchanged: preserve working 0.4 data
@@ -51,6 +51,17 @@ let items = [];
 let ownedMemory = {};
 let loadSequence = 0;
 let initialLinkHandled = false;
+// On-demand quest detail queries never block the key list or map data.
+const questDetailRequests = new Map();
+const QUEST_DETAIL_QUERY = `query KeyQuestDetails($id: ID!) {
+  en: task(id:$id, lang:en) {
+    id name wikiLink trader { name } map { name normalizedName }
+    objectives { id type description maps { name normalizedName } }
+  }
+  ko: task(id:$id, lang:ko) {
+    id name objectives { id description }
+  }
+}`;
 function readJSON(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
 function writeJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } }
 function getOwned() { const data = readJSON(OWNED_KEY, ownedMemory); return data && typeof data === 'object' && !Array.isArray(data) ? data : {}; }
@@ -91,6 +102,107 @@ function nameHint(name) {
   if (/\bULTRA\s+medical\b/i.test(value)) return { mapName:'인터체인지', text:'ULTRA 의료 구역 관련 · 상세 출입구 확인 필요', source:'이름 단서' };
   if (/\bTerraGroup\s+Labs?\b/i.test(value)) return { mapName:'연구소', text:'TerraGroup Labs 관련 · 사용 위치 확인 필요', source:'이름 단서' };
   return null;
+}
+// Extract only literal location words/numbers that are present in the English item name.
+// A parsed room number is NOT proof that a door is in a particular building.
+function roomDetails(item) {
+  const english=String(item?.nameEn||'');
+  const specs=[
+    {re:/\b(?:health\s+resort\s+)?(west\s*wing|east\s*wing)\s*(?:room\s*)?(\d{3})\b/i,build:m=>/west/i.test(m[1])?'리조트 서관':'리조트 동관',num:2},
+    {re:/\b(dorm(?:itory|s)?)\s*(?:room\s*)?(\d{3})\b/i,build:()=> '기숙사',num:2},
+    {re:/\b(pinewood(?:\s+hotel)?)\s*(?:room\s*)?(\d{2,3})\b/i,build:()=> 'Pinewood',num:2},
+    {re:/\b(concordia)\s*(?:(?:apartment|room)\s*)?(\d{1,3})\b/i,build:()=> 'Concordia',num:2},
+    {re:/\b(chekannaya)\s*(?:(?:apartment|room)\s*)?(\d{1,3})\b/i,build:()=> 'Chekannaya',num:2}
+  ];
+  for(const spec of specs){
+    const match=english.match(spec.re);
+    if(!match)continue;
+    const number=match[spec.num];
+    return {building:spec.build(match),number,floor:number.length===3?number[0]+'층':'층수 미확인',evidence:match[0],source:'아이템 영문 이름'};
+  }
+  // Some item names identify a room without a building. Keep them non-geographic.
+  const generic=english.match(/\b(?:room|apartment)\s*(?:number\s*)?(\d{2,3})\b/i);
+  return generic?{building:'건물 미확인',number:generic[1],floor:'층수 미확인',evidence:generic[0],source:'아이템 영문 이름'}:null;
+}
+function safeExternalLink(url,title,cls){
+  return typeof url==='string' && /^https:\/\//i.test(url) ? link(url,title,cls) : null;
+}
+// The second GraphQL call is optional, initiated only when a user expands a quest.
+async function queryQuest(id){
+  if(!/^[0-9a-zA-Z_-]{1,80}$/.test(String(id)))throw Error('유효하지 않은 퀘스트 ID');
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),15000);
+  try{
+    const response=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:QUEST_DETAIL_QUERY,variables:{id}}),signal:controller.signal});
+    if(!response.ok)throw Error(`API HTTP ${response.status}`);
+    const payload=await response.json();
+    if(payload.errors?.length)throw Error(payload.errors[0].message||'퀘스트 API 오류');
+    if(!payload?.data?.en)throw Error('퀘스트 상세 데이터가 없습니다.');
+    return payload.data;
+  }finally{clearTimeout(timeout);}
+}
+function getQuestDetails(id){
+  if(!questDetailRequests.has(id)){
+    const request=queryQuest(id).catch(error=>{questDetailRequests.delete(id);throw error;});
+    questDetailRequests.set(id,request);
+  }
+  return questDetailRequests.get(id);
+}
+function questDetailsCard(task,container){
+  container.replaceChildren();
+  const translated=task.ko||{};
+  const quest=task.en;
+  const metadata=el('div','quest-meta');
+  if(quest.trader?.name)metadata.append(el('span','quest-chip',`상인: ${quest.trader.name}`));
+  if(quest.map?.name)metadata.append(el('span','quest-chip',`진행 맵: ${koreanMapName(quest.map.normalizedName||quest.map.name)}`));
+  if(metadata.children.length)container.append(metadata);
+  const objectives=Array.isArray(quest.objectives)?quest.objectives:[];
+  if(objectives.length){
+    const koById=new Map((translated.objectives||[]).filter(x=>x?.id).map(x=>[x.id,x.description]));
+    const list=el('ol','quest-objectives');
+    for(const objective of objectives.slice(0,12)){
+      const li=el('li');
+      const ko=koById.get(objective.id);
+      li.append(el('span','',ko||objective.description||'목표 설명이 없습니다.'));
+      if(ko && objective.description && ko!==objective.description)li.append(el('small','quest-english',objective.description));
+      const maps=(objective.maps||[]).map(x=>koreanMapName(x?.normalizedName||x?.name)).filter(Boolean);
+      if(maps.length)li.append(el('small','quest-map-note',`목표 맵: ${[...new Set(maps)].join(' · ')}`));
+      list.append(li);
+    }
+    container.append(list);
+    if(objectives.length>12)container.append(el('p','caution',`나머지 ${objectives.length-12}개 목표는 퀘스트 위키에서 확인하세요.`));
+  }else container.append(el('p','caution','API에서 퀘스트 목표를 제공하지 않습니다.'));
+  const url=safeExternalLink(quest.wikiLink,'퀘스트 위키에서 보기 ↗','quest-wiki');
+  if(url)container.append(url);
+  container.append(el('p','quest-disclaimer','주의: 위 목록은 퀘스트 전체 목표입니다. 모든 목표에 이 열쇠가 직접 쓰인다는 의미는 아닙니다.'));
+}
+function questPanel(task){
+  const details=el('details','quest-card');
+  const summary=el('summary','quest-summary');
+  const name=el('span','quest-name',task.nameKo&&task.nameKo!==task.name?task.nameKo:task.name);
+  if(task.nameKo&&task.nameKo!==task.name)name.append(el('small','quest-english',task.name));
+  summary.append(name,el('span','quest-toggle-label','목표 확인'));
+  details.append(summary);
+  const contents=el('div','quest-content');
+  contents.append(el('p','quest-loading','펼치면 퀘스트 목표를 불러옵니다.'));
+  details.append(contents);
+  let pending=false;
+  details.addEventListener('toggle',async()=>{
+    if(!details.open||pending||details.dataset.loaded==='true')return;
+    pending=true;contents.replaceChildren(el('p','quest-loading','퀘스트 목표를 불러오는 중...'));
+    try{
+      const data=await getQuestDetails(task.id);
+      questDetailsCard(data,contents);
+      details.dataset.loaded='true';
+    }catch(error){
+      const msg=error?.name==='AbortError'?'연결 시간이 초과되었습니다.':String(error?.message||'연결 오류');
+      contents.replaceChildren(el('p','caution',`퀘스트 상세 정보를 불러오지 못했어요: ${msg}`));
+      const retry=el('button','quest-retry','다시 시도');retry.type='button';
+      retry.addEventListener('click',()=>{details.open=false;requestAnimationFrame(()=>{details.open=true;});});
+      contents.append(retry);
+    }finally{pending=false;}
+  });
+  return details;
 }
 function displayMaps(item) {
   const verified = Array.isArray(item.mapNames) ? item.mapNames : [];
@@ -328,66 +440,103 @@ function matches(item,search,map,filter,type,purpose,owned) {
   if(purpose==='unmapped' && item.mapNames.length)return false;
   if(purpose==='located' && !item.lockPositions.length)return false;
   if(purpose==='access' && !item.accessMaps.length)return false;
-  const terms=normalized(`${item.nameKo} ${item.nameEn} ${item.shortNameEn} ${item.shortNameKo} ${displayMaps(item).join(' ')} ${item.hint?.text||''} ${item.tasks.map(t=>`${t.name} ${t.nameKo}`).join(' ')}`);
+  if(purpose==='room' && !roomDetails(item))return false;
+  const terms=normalized(`${item.nameKo} ${item.nameEn} ${item.shortNameEn} ${item.shortNameKo} ${displayMaps(item).join(' ')} ${item.hint?.text||''} ${roomDetails(item)?.building||''} ${roomDetails(item)?.number||''} ${item.tasks.map(t=>`${t.name} ${t.nameKo}`).join(' ')}`);
   return !search || search.split(/\s+/).every(word=>terms.includes(word));
 }
 function section(body,heading,content) { const s=el('section','detail-section');s.append(el('h3','',heading),content);body.append(s); }
 function showDetail(item, updateAddress=true) {
-  const body=$('detail-body'); body.replaceChildren();
+  const body=$('detail-body');body.replaceChildren();
   const header=el('div','detail-top');
   if(item.iconLink){const image=el('img');image.src=item.iconLink;image.alt='';header.append(image);}
-  const names=el('div');names.append(el('h2','',item.nameKo||item.nameEn));if(item.nameKo)names.append(el('p','',item.nameEn));header.append(names);body.append(header);
-  const status=el('div','detail-facts');
-  status.append(el('span','fact',item.keycard?'▣ 키카드/출입 카드':'⚿ 일반 열쇠'));
-  if(Number.isInteger(item.uses))status.append(el('span','fact',item.uses===0?'사용 횟수: 0 (의미 확인 필요)':`사용 횟수: ${item.uses}회`));
-  if(item.accessMaps.length) status.append(el('span','fact accent','맵 입장용 열쇠'));
-  if(item.tasks.length)status.append(el('span','fact accent',`연관 퀘스트 ${item.tasks.length}개`));
-  body.append(status);
-  const mapWrap=el('div','location-list');
-  if(item.mapNames.length) {
-    for (const map of item.mapNames){const line=el('div','location-row');line.append(el('span','source-tag verified','API 확인'),el('strong','',map));const url=mapUrl(map);if(url)line.append(link(url,'지도 보기 ↗','map-link'));mapWrap.append(line);}
-  } else if(item.hint) {
-    const line=el('div','location-row');line.append(el('span','source-tag guessed','이름 단서'),el('strong','',item.hint.mapName));const url=mapUrl(item.hint.mapName);if(url)line.append(link(url,'지도 보기 ↗','map-link'));mapWrap.append(line);
-    mapWrap.append(el('p','caution','맵이 API로 확인되지 않아 열쇠 이름을 근거로 안내합니다. 실제 사용처는 위키에서 확인하세요.'));
-  } else mapWrap.append(el('p','caution','공개 데이터에서 사용 맵 연결을 확인할 수 없습니다.'));
-  section(body,'사용 맵',mapWrap);
-  if(item.hint) section(body,'건물 · 층 · 방 정보 (이름 단서)',el('p','caution',`${item.hint.text} — 아이템 이름에 있는 정보로 구성한 안내이며, 실제 사용 가능 위치의 검증 자료는 아닙니다.`));
-  if(item.lockPositions.length) {
-    const wrapper=el('div','coordinates');
-    const format=n=>Number(n).toFixed(1).replace(/\.0$/,'');
-    for(const pos of item.lockPositions.slice(0,50)) {
-      const p=el('div','coord-row');
-      p.append(el('strong','',pos.mapName),el('code','',`X ${format(pos.x)} · Y ${format(pos.y)} · Z ${format(pos.z)}`));
-      if(pos.needsPower)p.append(el('span','fact warning','전력 필요 (API)'));
-      wrapper.append(p);
+  const names=el('div');names.append(el('h2','',item.nameKo||item.nameEn));
+  if(item.nameKo)names.append(el('p','',item.nameEn));header.append(names);body.append(header);
+  const facts=el('div','detail-facts');
+  facts.append(el('span','fact',item.keycard?'▣ 키카드/출입 카드':'⚿ 일반 열쇠'));
+  if(Number.isInteger(item.uses))facts.append(el('span','fact',item.uses===0?'사용 횟수 0 · 의미 확인 필요':`사용 횟수 ${item.uses}회`));
+  if(item.accessMaps.length)facts.append(el('span','fact accent','맵 입장용'));
+  if(item.lockPositions.length)facts.append(el('span','fact accent',`잠긴 문 ${item.lockPositions.length}곳`));
+  if(item.tasks.length)facts.append(el('span','fact accent',`연관 퀘스트 ${item.tasks.length}개`));
+  body.append(facts);
+  const legend=el('div','source-legend');
+  legend.append(el('span','source-tag verified','API로 확인된 정보'),el('span','source-tag guessed','이름에서 추출한 단서'));
+  body.append(legend);
+
+  // Location area: confirmed game-map links and item-name hints stay separate.
+  const area=el('div','location-guide');
+  const maps=el('div','location-list');
+  if(item.mapNames.length){
+    for(const map of item.mapNames){
+      const line=el('div','location-row');
+      line.append(el('span','source-tag verified','API 확인'),el('strong','',map));
+      const url=mapUrl(map);if(url)line.append(link(url,'지도 보기 ↗','map-link'));
+      maps.append(line);
     }
-    if(item.lockPositions.length>50)wrapper.append(el('p','caution',`나머지 ${item.lockPositions.length-50}개 위치는 생략했습니다.`));
-    wrapper.append(el('p','caution','API 지도 좌표이며 게임 내 월드 좌표와 다를 수 있습니다. 정확한 출입구와 층수는 맵 또는 위키에서 확인하세요.'));
-    const atlasBtn=el('button','atlas-link','⌖ 맵 위치 탐색에서 보기');atlasBtn.type='button';
-    atlasBtn.addEventListener('click',()=>{
-      const first=item.lockPositions.find(pos=>pos?.mapName&&Number.isFinite(pos.x)&&Number.isFinite(pos.z));
-      if(!first)return;
-      atlasMap=first.mapName;atlasHighlightedId=item.id;
-      closeDetail();renderAtlas();
-      focusAtlasPin();
-      $('atlas').scrollIntoView({behavior:'smooth',block:'start'});
-    });
-    wrapper.append(atlasBtn);
-    section(body,'잠긴 문 좌표 (API 제공)',wrapper);
+  }else if(item.hint){
+    const line=el('div','location-row');
+    line.append(el('span','source-tag guessed','이름 단서'),el('strong','',item.hint.mapName));
+    const url=mapUrl(item.hint.mapName);if(url)line.append(link(url,'지도 보기 ↗','map-link'));
+    maps.append(line);
+  }else maps.append(el('p','caution','API에 연결된 사용 맵이 없습니다. 아직 분류되지 않았을 수 있습니다.'));
+  area.append(maps);
+  const room=roomDetails(item);
+  if(room){
+    const info=el('div','room-info');
+    info.append(el('span','source-tag guessed','이름 단서'));
+    const facts=el('div','room-grid');
+    for(const [heading,value] of [['건물·구역',room.building],['층',room.floor],['방·호수',room.number]]){
+      const datum=el('div','room-cell');datum.append(el('small','',heading),el('strong','',value));facts.append(datum);
+    }
+    info.append(facts,el('p','caution',`아이템 영어 이름의 “${room.evidence}”에서 추출했습니다. 실제 사용 위치를 별도 검증한 정보는 아닙니다.`));
+    area.append(info);
+  }else if(item.hint){
+    area.append(el('p','caution',item.hint.text+' · 열쇠 이름 단서이며 방 번호는 추가 확인이 필요합니다.'));
+  }else area.append(el('p','caution','아이템 이름으로부터 건물·층·방 번호를 확실하게 분리할 수 없습니다. 위키에서 사용처를 확인해 주세요.'));
+  section(body,'사용 맵 · 건물 · 방 안내',area);
+
+  if(item.lockPositions.length){
+    const wrapper=el('div','coordinates');
+    const fmt=n=>Number(n).toFixed(1).replace(/\.0$/,'');
+    for(const pos of item.lockPositions.slice(0,50)){
+      const row=el('div','coord-row');
+      const left=el('div','coord-details');
+      left.append(el('strong','',pos.mapName),el('code','',`X ${fmt(pos.x)} · Y ${fmt(pos.y)} · Z ${fmt(pos.z)}`));
+      if(pos.needsPower)left.append(el('small','coord-power','⚡ API: 전력 필요'));
+      row.append(left);
+      const jump=el('button','coord-jump','지도에서 보기');jump.type='button';
+      jump.addEventListener('click',()=>{
+        atlasMap=pos.mapName;atlasHighlightedId=item.id;
+        closeDetail();renderAtlas();focusAtlasPin();
+        $('atlas').scrollIntoView({behavior:'smooth',block:'start'});
+      });
+      row.append(jump);wrapper.append(row);
+    }
+    if(item.lockPositions.length>50)wrapper.append(el('p','caution',`좌표가 너무 많아 나머지 ${item.lockPositions.length-50}곳은 생략했습니다.`));
+    wrapper.append(el('p','caution','좌표는 tarkov.dev API 데이터 기준입니다. 층(Y) 높이와 지도 이미지 위치가 완전히 일치하는지는 맵별로 확인이 필요합니다.'));
+    section(body,'잠긴 문 위치 · 지도 바로가기',wrapper);
+  }else section(body,'잠긴 문 위치',el('p','caution','API에 잠긴 문 좌표가 등록되어 있지 않습니다. 문이 없다는 의미는 아닙니다.'));
+
+  if(item.accessMaps.length){
+    section(body,'맵 진입용 열쇠',el('p','',`${item.accessMaps.join(', ')}에 접근하기 위한 아이템으로 API에 등록되어 있습니다.`));
   }
-  if(item.accessMaps.length)section(body,'맵 진입에 필요한 열쇠',el('p','',`${item.accessMaps.join(', ')} 입장용으로 API에 등록되어 있습니다.`));
-  if(item.tasks.length){const ul=el('ul','quest-list');for(const t of item.tasks){const li=el('li');li.append(el('strong','',t.nameKo&&t.nameKo!==t.name?t.nameKo:t.name));if(t.nameKo&&t.nameKo!==t.name)li.append(el('small','',t.name));ul.append(li);}section(body,'관련 퀘스트 (API 연관 정보)',ul);}
-  else section(body,'관련 퀘스트',el('p','caution','API에 연결된 퀘스트가 없습니다. 퀘스트에 필요하지 않다는 확정 정보는 아닙니다.'));
-  if(item.description)section(body,'아이템 설명 (영문)',el('p','',item.description));
+
+  const quests=el('div','quest-panel');
+  if(item.tasks.length){
+    quests.append(el('p','quest-intro','퀘스트를 눌러 담당 상인, 진행 맵, 전체 목표를 확인하세요. 목표 정보는 클릭 시에만 추가로 불러옵니다.'));
+    for(const task of item.tasks)quests.append(questPanel(task));
+  }else quests.append(el('p','caution','API에 연결된 관련 퀘스트가 없습니다. 이 열쇠가 퀘스트에서 쓰이지 않는다는 확정 정보는 아닙니다.'));
+  section(body,`관련 퀘스트${item.tasks.length?' · '+item.tasks.length+'개':''}`,quests);
+
+  if(item.description)section(body,'아이템 설명 (영어 원문)',el('p','',item.description));
   const more=el('div','detail-actions');
-  if(/^https:\/\//i.test(item.wikiLink)) more.append(link(item.wikiLink,'위키에서 정확한 방 위치 확인 ↗','detail-action-link'));
+  const wiki=safeExternalLink(item.wikiLink,'열쇠 위키에서 사용처 확인 ↗','detail-action-link');if(wiki)more.append(wiki);
   const share=el('button','share-btn','🔗 이 열쇠 링크 복사');share.type='button';
   share.addEventListener('click',async()=>{
     const url=new URL(window.location.href);url.searchParams.set('key',item.id);
     try{await navigator.clipboard.writeText(url.href);share.textContent='✓ 링크 복사 완료';}
     catch{window.prompt('이 링크를 복사하세요:',url.href);}
   });
-  more.append(share);section(body,'추가 정보 · 공유',more);
+  more.append(share);section(body,'공유 · 원문 확인',more);
   if(updateAddress){const url=new URL(window.location.href);url.searchParams.set('key',item.id);history.replaceState(null,'',url);}
   if(!$('detail').open)$('detail').showModal();
 }
@@ -403,6 +552,7 @@ function cardFor(item,owned){
   const effective=displayMaps(item);
   card.append(el('div','map-chip',(item.mapNames.length?'✓ ':'? ')+(effective.join(' · ') || '사용 맵 확인 필요')));
   if(item.hint)card.append(el('div','hint-chip',`⌕ ${item.hint.text}`));
+  const room=roomDetails(item);if(room)card.append(el('div','room-chip',`▣ ${room.building} · ${room.number}호 (이름 단서)`));
   if(item.lockPositions.length)card.append(el('div','position-hint',`⌖ 잠긴 문 좌표 ${item.lockPositions.length}곳`));
   if(item.accessMaps.length)card.append(el('div','position-hint','↗ 맵 입장용 열쇠'));
   const bottom=el('div','card-bottom'),label=el('label','owned-label'),check=el('input');check.type='checkbox';check.checked=!!owned[item.id];check.setAttribute('aria-label',`${item.nameKo||item.nameEn} 보유 체크`);

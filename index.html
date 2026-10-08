@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#131a18">
   <meta name="description" content="Escape from Tarkov 열쇠 및 키카드 도감. 맵별 검색과 브라우저별 보유 기록 관리.">
   <title>Tarkov Key Guide | 타르코프 열쇠 도감</title>
-  <link rel="stylesheet" href="style.css?v=060">
-  <script src="script.js?v=060" defer></script>
+  <link rel="stylesheet" href="style.css?v=070">
+  <script src="script.js?v=070" defer></script>
 </head>
 <body>
   <header class="hero">
     <div class="shell">
-      <div class="eyebrow">ESCAPE FROM TARKOV · UNOFFICIAL COMMUNITY TOOL <span class="version-pill">v0.6</span></div>
+      <div class="eyebrow">ESCAPE FROM TARKOV · UNOFFICIAL COMMUNITY TOOL <span class="version-pill">v0.7</span></div>
       <h1><span class="keyicon">⌘</span> TARKOV <em>KEY GUIDE</em></h1>
       <p>모든 맵의 열쇠와 키카드를 찾아보고, 잠긴 문 위치, 퀘스트 용도, 내 보유 현황을 한곳에서 확인하세요.</p>
       <div class="stats" aria-label="열쇠 보유 통계">
@@ -30,7 +30,7 @@
         <label>맵 <select id="map"><option value="all">전체 맵</option></select></label>
         <label>보유 여부 <select id="filter"><option value="all">전체</option><option value="owned">보유</option><option value="missing">미보유</option></select></label>
         <label>종류 <select id="type"><option value="all">열쇠 + 키카드</option><option value="keycard">키카드</option><option value="key">일반 열쇠</option></select></label>
-        <label>기타 <select id="purpose"><option value="all">전체 용도</option><option value="quest">퀘스트 관련</option><option value="unmapped">맵 연결 미확인</option><option value="located">문 좌표 제공</option><option value="access">맵 입장 열쇠</option></select></label>
+        <label>기타 <select id="purpose"><option value="all">전체 용도</option><option value="quest">퀘스트 관련</option><option value="unmapped">맵 연결 미확인</option><option value="located">문 좌표 제공</option><option value="access">맵 입장 열쇠</option><option value="room">방 번호 단서 있음</option></select></label>
         <label>정렬 <select id="sort"><option value="name">이름순</option><option value="owned">보유 우선</option><option value="missing">미보유 우선</option></select></label>
       </div>
       <div class="panel-bottom"><div id="status" role="status" aria-live="polite">열쇠 데이터를 준비 중...</div><button id="refresh" class="small-button" type="button">↻ 데이터 새로고침</button></div>
@@ -38,7 +38,7 @@
     <section class="map-nav-section" aria-label="맵 선택"><div class="map-nav-title"><strong>MAP SELECT · 맵 선택</strong><span>맵 이름은 항상 표시됩니다. 데이터가 없으면 결과가 비어 있을 수 있어요.</span></div><nav class="map-shortcuts" aria-label="전체 맵 선택" id="map-shortcuts"></nav></section>
     <section class="atlas panel" id="atlas" aria-label="맵 이미지와 열쇠 위치 탐색">
       <div class="atlas-heading">
-        <div><div class="atlas-overline">LOCATION ATLAS · v0.6</div><h2>맵 보기 <span id="atlas-map-label">세관</span></h2><p>일부 맵은 지도 이미지 위에 API 확인 좌표를 바로 표시합니다. 지원되지 않는 맵은 좌표 분포도에서 확인하세요.</p></div>
+        <div><div class="atlas-overline">LOCATION ATLAS · v0.7</div><h2>맵 보기 <span id="atlas-map-label">세관</span></h2><p>일부 맵은 지도 이미지 위에 API 확인 좌표를 바로 표시합니다. 지원되지 않는 맵은 좌표 분포도에서 확인하세요.</p></div>
         <div class="atlas-actions"><label for="atlas-map">지도 선택</label><select id="atlas-map" aria-label="지도 미리보기 선택"></select></div>
       </div>
       <div class="atlas-columns">
@@ -62,14 +62,14 @@
         </div>
       </div>
     </section>
-    <div class="section-head"><div><h2>KEY INVENTORY</h2><p class="section-sub">확인된 맵 정보와 열쇠 이름에서 읽은 위치 단서를 구분해 표시합니다.</p></div><span id="result-count"></span></div>
+    <div class="section-head"><div><h2>KEY INVENTORY</h2><p class="section-sub">열쇠의 <strong>상세 보기</strong>를 누르면 사용 맵·건물·방 번호와 퀘스트 목표를 확인할 수 있습니다. <span class="feature-chip">NEW · 퀘스트 상세 정보</span></p></div><span id="result-count"></span></div>
     <div id="cards" class="grid" aria-live="off"></div>
     <section class="backup panel">
       <div><h2>보유 현황 백업</h2><p>체크 기록은 이 기기의 브라우저에만 저장돼요. 다른 기기로 옮기려면 백업 파일을 사용하세요.</p></div>
       <div class="backup-actions"><button id="export" type="button">↓ 백업 내보내기</button><label class="button-like" for="import">↑ 백업 가져오기</label><input id="import" type="file" accept=".json,application/json" hidden></div>
     </section>
   </main>
-  <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-head"><strong id="detail-title">KEY DETAILS</strong><button id="close-detail" aria-label="닫기" type="button">✕</button></div><div id="detail-body"></div></dialog>
-  <footer class="shell"><span>비공식 팬 제작 도감 · 아이템/지도 데이터 출처: <a href="https://tarkov.dev/" target="_blank" rel="noopener noreferrer">tarkov.dev</a></span><span>보유 기록은 서버로 전송하지 않습니다. · v0.6</span></footer>
+  <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-head"><strong id="detail-title">KEY INTELLIGENCE · v0.7</strong><button id="close-detail" aria-label="닫기" type="button">✕</button></div><div id="detail-body"></div></dialog>
+  <footer class="shell"><span>비공식 팬 제작 도감 · 아이템/지도 데이터 출처: <a href="https://tarkov.dev/" target="_blank" rel="noopener noreferrer">tarkov.dev</a></span><span>보유 기록은 서버로 전송하지 않습니다. · v0.7</span></footer>
 </body>
 </html>
