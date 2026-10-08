@@ -1,5 +1,5 @@
 'use strict';
-// Tarkov Key Guide v0.7. GitHub Pages, no account, no backend.
+// Tarkov Key Guide v0.7.1. GitHub Pages, no account, no backend.
 const API = 'https://api.tarkov.dev/graphql';
 const OWNED_KEY = 'tarkov-key-guide-owned-v1'; // DO NOT CHANGE: existing users' checkmarks.
 const CACHE_KEY = 'tarkov-key-guide-items-v4'; // Cache format unchanged: preserve working 0.4 data
@@ -62,6 +62,153 @@ const QUEST_DETAIL_QUERY = `query KeyQuestDetails($id: ID!) {
     id name objectives { id description }
   }
 }`;
+// v0.7.1: JSON API is the supported source; GraphQL is a best-effort fallback.
+// The JSON feed is indexed by id and uses separate translated string dictionaries.
+const JSON_API = 'https://json.tarkov.dev/regular/';
+const KEY_CATEGORY_IDS = new Set([
+  '543be5e94bdc2df1348b4568', // Key
+  '5c99f98d86f7745c314214b3', // Mechanical key
+  '5c164d2286f774194c5e69fa'  // Keycard
+]);
+let jsonQuestRecords = new Map();
+let jsonQuestNamesEn = {};
+let jsonQuestNamesKo = {};
+let jsonMapsById = new Map();
+function idOf(value) { return typeof value==='string' ? value : (value && typeof value.id==='string' ? value.id : null); }
+function jsonRows(source){
+  if(Array.isArray(source)) return source.filter(x=>x&&typeof x==='object');
+  if(!source||typeof source!=='object')return [];
+  return Object.entries(source).filter(([,v])=>v&&typeof v==='object'&&!Array.isArray(v)).map(([id,v])=>({...v,id:v.id||id}));
+}
+function lookupText(dictionary,key){
+  if(typeof key!=='string'||!key)return '';
+  if(dictionary&&typeof dictionary[key]==='string'&&dictionary[key].trim())return dictionary[key].trim();
+  // The JSON data occasionally spells placeholder suffixes with different case.
+  for(const variant of [key.replace(/ Name$/, ' name').replace(/ ShortName$/, ' shortName').replace(/ Description$/, ' description'),key.replace(/ name$/, ' Name').replace(/ shortName$/, ' ShortName').replace(/ description$/, ' Description')]){
+    if(dictionary&&typeof dictionary[variant]==='string'&&dictionary[variant].trim())return dictionary[variant].trim();
+  }
+  return '';
+}
+function fallbackName(raw){
+  let wiki='';
+  if(typeof raw.wikiLink==='string' && /^https:\/\//.test(raw.wikiLink)){
+    try{wiki=decodeURIComponent(new URL(raw.wikiLink).pathname.split('/').pop()||'').replace(/_/g,' ');}catch{}
+  }
+  if(wiki)return wiki;
+  const slug=String(raw.normalizedName||'').replace(/-/g,' ').trim();
+  return slug||String(raw.id||'Unknown key');
+}
+function validString(v){return typeof v==='string'?v:'';}
+async function getJson(path,ms=24000){
+  const response=await fetch(JSON_API+path,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(ms)});
+  if(!response.ok)throw Error('JSON '+path+' HTTP '+response.status);
+  const payload=await response.json();
+  if(!payload||!payload.data||typeof payload.data!=='object')throw Error('JSON '+path+' 데이터 형식 오류');
+  return payload.data;
+}
+function addTaskRefs(raw,links){
+  const push=(itemId)=>{if(!itemId||typeof itemId!=='string')return;links.add(itemId);};
+  const scan=(group)=>{
+    if(Array.isArray(group)){for(const entry of group)scan(entry);return;}
+    push(idOf(group));
+  };
+  scan(raw.neededKeys);
+  if(Array.isArray(raw.objectives))for(const obj of raw.objectives)scan(obj.requiredKeys);
+}
+// Converts the native JSON shape to the existing v0.7 item/map/task shape.
+function adaptJsonCatalog(itemPayload,itemEn,itemKo,mapPayload,taskPayload,taskEn,taskKo){
+  const itemRows=jsonRows(itemPayload.items);
+  if(itemRows.length===0)throw Error('JSON API에서 아이템 목록이 비어 있습니다.');
+  const allKeys=itemRows.filter(raw=>{
+    const categories=Array.isArray(raw.categories)?raw.categories.map(idOf):[];
+    const typeCheck=Array.isArray(raw.types)&&raw.types.includes('keys');
+    return categories.some(id=>KEY_CATEGORY_IDS.has(id))||typeCheck;
+  });
+  if(!allKeys.length)throw Error('JSON API에서 열쇠 분류가 0개입니다.');
+  const keyIds=new Set(allKeys.map(x=>x.id));
+  const taskRefs=new Map();
+  jsonQuestRecords=new Map();jsonQuestNamesEn=taskEn||{};jsonQuestNamesKo=taskKo||{};
+  for(const task of jsonRows(taskPayload?.tasks)){
+    jsonQuestRecords.set(task.id,task);
+    const keyRefs=new Set();addTaskRefs(task,keyRefs);
+    if(keyRefs.size){
+      const name=lookupText(taskEn,task.name)||validString(task.name);
+      const nameKo=lookupText(taskKo,task.name)||'';
+      for(const id of keyRefs){
+        if(!keyIds.has(id))continue;
+        if(!taskRefs.has(id))taskRefs.set(id,[]);
+        taskRefs.get(id).push({id:task.id,name,nameKo});
+      }
+    }
+  }
+  // Map lock key refs and access key refs are ID strings, not nested Item objects.
+  const maps=[];
+  jsonMapsById=new Map();
+  for(const map of jsonRows(mapPayload?.maps)){
+    jsonMapsById.set(map.id,map);
+    const normalizeLock=lock=>({
+      key: {id:idOf(lock?.key)},
+      lockType: lock?.lockType||'',needsPower:lock?.needsPower===true,
+      position:lock?.position&&typeof lock.position==='object'?lock.position:null
+    });
+    maps.push({name:map.normalizedName||map.name||map.id,
+      normalizedName:map.normalizedName||map.name||map.id,
+      locks:Array.isArray(map.locks)?map.locks.filter(x=>x&&typeof x==='object').map(normalizeLock):[],
+      accessKeys:Array.isArray(map.accessKeys)?map.accessKeys.map(x=>({id:idOf(x)})):[]});
+  }
+  const english=[],korean=[];
+  for(const raw of allKeys){
+    const nameEn=lookupText(itemEn,raw.name)||((typeof raw.name==='string'&&!/^\w{24} (?:Name|name)$/i.test(raw.name))?raw.name:fallbackName(raw));
+    const nameKo=lookupText(itemKo,raw.name)||nameEn;
+    const shortNameEn=lookupText(itemEn,raw.shortName)||'';
+    const shortNameKo=lookupText(itemKo,raw.shortName)||shortNameEn;
+    const description=lookupText(itemEn,raw.description)||'';
+    const tasks=taskRefs.get(raw.id)||[];
+    const base={id:raw.id,name:nameEn,shortName:shortNameEn,iconLink:raw.iconLink||'',wikiLink:raw.wikiLink||'',description,
+      usedInTasks:tasks.map(t=>({id:t.id,name:t.name})),properties:{uses:raw.properties?.uses}};
+    english.push(base);
+    korean.push({id:raw.id,name:nameKo,shortName:shortNameKo,
+      usedInTasks:tasks.map(t=>({id:t.id,name:t.nameKo||t.name}))});
+  }
+  const result=makeItems(english,korean,maps);
+  for(const item of result){
+    const raw=allKeys.find(x=>x.id===item.id);
+    if(raw&&Array.isArray(raw.categories)&&raw.categories.map(idOf).includes('5c164d2286f774194c5e69fa'))item.keycard=true;
+  }
+  return {items:result,english,korean,maps,source:'json.tarkov.dev'};
+}
+async function loadFromJson(){
+  // Minimum viable dataset is items plus the translated name file. Other feeds are optional.
+  const [base,en,ko,maps,tasks,tasksEn,tasksKo]=await Promise.allSettled([
+    getJson('items'),getJson('items_en'),getJson('items_ko'),getJson('maps'),getJson('tasks'),getJson('tasks_en'),getJson('tasks_ko')
+  ]);
+  if(base.status!=='fulfilled')throw Error(base.reason?.message||'JSON 아이템 연결 실패');
+  if(en.status!=='fulfilled')throw Error(en.reason?.message||'JSON 영문 이름 연결 실패');
+  const catalog=adaptJsonCatalog(base.value,en.value,ko.status==='fulfilled'?ko.value:{},
+    maps.status==='fulfilled'?maps.value:null,tasks.status==='fulfilled'?tasks.value:null,
+    tasksEn.status==='fulfilled'?tasksEn.value:{},tasksKo.status==='fulfilled'?tasksKo.value:{});
+  catalog.warnings=[];
+  if(ko.status==='rejected')catalog.warnings.push('한글 이름 일부 미제공');
+  if(maps.status==='rejected')catalog.warnings.push('맵 연결 정보 미제공');
+  if(tasks.status==='rejected')catalog.warnings.push('퀘스트 연관 정보 미제공');
+  return catalog;
+}
+function jsonQuestDetail(id){
+  const task=jsonQuestRecords.get(id);
+  if(!task)return null;
+  const en={id,name:lookupText(jsonQuestNamesEn,task.name)||validString(task.name),wikiLink:task.wikiLink||'',
+    trader:typeof task.trader==='object'?task.trader:null,
+    map:null,
+    objectives:Array.isArray(task.objectives)?task.objectives.map(obj=>({
+      id:obj.id||'',type:obj.type||'',description:lookupText(jsonQuestNamesEn,obj.description)||validString(obj.description),
+      maps:Array.isArray(obj.maps)?obj.maps.map(ref=>jsonMapsById.get(idOf(ref))||ref).filter(m=>m&&typeof m==='object').map(m=>({name:m.normalizedName||m.name||'',normalizedName:m.normalizedName||m.name||''})):[]
+    })):[]};
+  const map=jsonMapsById.get(idOf(task.map));
+  if(map)en.map={name:map.normalizedName||map.name||'',normalizedName:map.normalizedName||map.name||''};
+  const ko={id,name:lookupText(jsonQuestNamesKo,task.name)||en.name,
+    objectives:(Array.isArray(task.objectives)?task.objectives:[]).map(obj=>({id:obj.id||'',description:lookupText(jsonQuestNamesKo,obj.description)||lookupText(jsonQuestNamesEn,obj.description)||''}))};
+  return {en,ko};
+}
 function readJSON(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
 function writeJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } }
 function getOwned() { const data = readJSON(OWNED_KEY, ownedMemory); return data && typeof data === 'object' && !Array.isArray(data) ? data : {}; }
@@ -130,6 +277,8 @@ function safeExternalLink(url,title,cls){
 // The second GraphQL call is optional, initiated only when a user expands a quest.
 async function queryQuest(id){
   if(!/^[0-9a-zA-Z_-]{1,80}$/.test(String(id)))throw Error('유효하지 않은 퀘스트 ID');
+  const jsonDetail=jsonQuestDetail(id);
+  if(jsonDetail)return jsonDetail;
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),15000);
   try{
@@ -571,7 +720,15 @@ function render(){
   const percent=items.length?Math.round(100*ownedCount/items.length):0;$('stat-percent').textContent=percent+'%';$('progress-bar').style.width=percent+'%';
   $('result-count').textContent=`${visible.length.toLocaleString('ko-KR')}개 표시`;
   const fragment=document.createDocumentFragment();
-  if(!visible.length)fragment.append(el('p','empty',items.length?'선택한 맵에 확인된 열쇠가 없거나 맵 연결 데이터가 누락되었습니다. 다른 맵이나 전체를 선택해 보세요.':'열쇠 데이터가 아직 없습니다. 데이터 연결 상태를 확인해 주세요.'));
+  if(!visible.length){
+    const empty=el('div','empty',items.length?'검색 결과가 없습니다. 검색어·맵·종류·보유 필터를 확인해 주세요.':'열쇠 데이터를 아직 불러오지 못했습니다. 위쪽 데이터 연결 상태를 확인해 주세요.');
+    if(items.length){
+      const reset=el('button','reset-filter-btn','검색어 및 필터 전체 초기화');reset.type='button';
+      reset.addEventListener('click',()=>{ $('search').value='';$('map').value='all';$('filter').value='all';$('type').value='all';$('purpose').value='all';$('sort').value='name';render();});
+      empty.append(reset);
+    }
+    fragment.append(empty);
+  }
   else for(const item of visible)fragment.append(cardFor(item,owned));
   $('cards').replaceChildren(fragment);
   updateShortcutSelection();
@@ -603,28 +760,47 @@ function cachedItems(){
 async function load(force=false){
   const current=++loadSequence;
   const cache=cachedItems();
-  if(cache.length && !items.length){items=cache;updateFilters();render();status('저장된 목록 표시 중 · 최신 데이터 확인 중...');maybeOpenSharedItem();}
-  else status('tarkov.dev에서 최신 열쇠 정보를 확인하는 중...');
-  const [en,ko,maps]=await Promise.allSettled([graphql(queryEnglish,'items'),graphql(queryKorean,'items'),graphql(queryMaps,'maps')]);
+  if(cache.length&&!items.length){items=cache;updateFilters();render();status('저장된 목록 표시 중 · 최신 데이터 확인 중...');maybeOpenSharedItem();}
+  else status('JSON API에서 열쇠 데이터를 불러오는 중...');
+  let catalog=null;
+  let errors=[];
+  try{ catalog=await loadFromJson(); }
+  catch(error){errors.push('JSON: '+String(error?.message||error));}
   if(current!==loadSequence)return;
-  if(en.status!=='fulfilled'){
-    status(items.length?`저장된 목록 사용 중 · 갱신 실패: ${en.reason?.message||'연결 오류'}`:`열쇠 데이터 오류: ${en.reason?.message||'연결 실패'} · 잠시 후 새로고침해 주세요.`);
+  if(!catalog){
+    status('JSON API 연결 실패. 기존 GraphQL 데이터 확인 중...');
+    try{
+      const [en,ko,maps]=await Promise.allSettled([graphql(queryEnglish,'items'),graphql(queryKorean,'items'),graphql(queryMaps,'maps')]);
+      if(en.status!=='fulfilled')throw en.reason||Error('GraphQL 영문 열쇠 연결 실패');
+      const fresh=makeItems(en.value.data,ko.status==='fulfilled'?ko.value.data:[],maps.status==='fulfilled'?maps.value.data:[]);
+      if(!fresh.length)throw Error('GraphQL 열쇠 목록 0개');
+      catalog={items:fresh,source:'GraphQL',warnings:[]};
+      if(ko.status==='rejected')catalog.warnings.push('한국어 번역 로딩 실패');
+      if(maps.status==='rejected')catalog.warnings.push('맵 데이터 로딩 실패');
+    }catch(error){errors.push('GraphQL: '+String(error?.message||error));}
+  }
+  if(current!==loadSequence)return;
+  if(!catalog){
+    status((items.length?'기존 저장 목록을 사용하는 중 · 최신 데이터 갱신 실패':'열쇠 데이터 불러오기 실패')+' · '+errors.join(' / ')+' · 다시 시도 버튼을 눌러주세요.');
     render();return;
   }
-  const previousById=new Map((items||[]).map(x=>[x.id,x]));
-  const fresh=makeItems(en.value.data,ko.status==='fulfilled'?ko.value.data:[],maps.status==='fulfilled'?maps.value.data:[]);
-  if(!fresh.length){status('API에서 0개가 반환되었습니다. 기존 목록을 보존합니다.');return;}
-  // If secondary API fails, preserve previously verified translations, maps and coordinates.
-  for(const item of fresh){const old=previousById.get(item.id);if(!old)continue;
-    if(ko.status!=='fulfilled'){item.nameKo=old.nameKo||'';item.shortNameKo=old.shortNameKo||'';item.tasks=item.tasks.map(t=>({...t,nameKo:old.tasks?.find(o=>o.id===t.id)?.nameKo||''}));}
-    if(maps.status!=='fulfilled'){item.mapNames=old.mapNames||[];item.accessMaps=old.accessMaps||[];item.lockPositions=old.lockPositions||[];}
+  // Restore extra fields when a secondary dataset is unavailable, never wipe ownership.
+  const previousById=new Map(items.map(x=>[x.id,x]));
+  for(const item of catalog.items){
+    const old=previousById.get(item.id);if(!old)continue;
+    if(!item.nameKo)item.nameKo=old.nameKo||'';
+    if(!item.mapNames.length&&(!catalog.maps?.length)){
+      item.mapNames=old.mapNames||[];item.lockPositions=old.lockPositions||[];item.accessMaps=old.accessMaps||[];
+    }
+    if(!item.tasks.length&&!catalog.warnings?.includes('퀘스트 연관 정보 미제공'))continue;
+    if(!item.tasks.length&&old.tasks?.length)item.tasks=old.tasks;
     prepareItem(item);
   }
-  items=fresh;updateFilters();render();writeJSON(CACHE_KEY,{version:4,timestamp:Date.now(),items});maybeOpenSharedItem();
-  const mapped=items.filter(x=>x.mapNames.length).length,inferred=items.filter(x=>!x.mapNames.length&&x.hint).length,coordinates=items.filter(x=>x.lockPositions.length).length;
-  const warnings=[];if(ko.status==='rejected')warnings.push('한국어 데이터 갱신 실패');if(maps.status==='rejected')warnings.push('맵 정보 API 오류: '+String(maps.reason?.message||'연결 실패'));
-  for(const response of [en,ko,maps])if(response.status==='fulfilled'&&response.value.warning)warnings.push(response.value.warning);
-  status(`${items.length}개 · API 맵 확인 ${mapped}개 · 이름 단서 ${inferred}개 · 문 좌표 ${coordinates}개${warnings.length?' · '+[...new Set(warnings)].join(' / '):''}`);
+  items=catalog.items;updateFilters();render();maybeOpenSharedItem();
+  const wrote=writeJSON(CACHE_KEY,{version:4,timestamp:Date.now(),items});
+  const mapped=items.filter(x=>x.mapNames.length).length;
+  const warning=[...(catalog.warnings||[])];if(!wrote)warning.push('아이템 캐시 저장 실패 (보유 기록은 별도)');
+  status(`열쇠 ${items.length}개 로딩 성공 · ${catalog.source} · 맵 확인 ${mapped}개`+(warning.length?' · '+warning.join(' / '):''));
 }
 $('atlas-map').addEventListener('change',event=>{atlasMap=event.target.value;atlasHighlightedId=null;renderAtlas();});
 $('atlas-image').addEventListener('load',()=>{const img=$('atlas-image');if(img.naturalWidth>0){img.hidden=false;$('atlas-map-content').hidden=false;$('atlas-image-fallback').hidden=true;$('atlas-overlay').hidden=!$('atlas-show-pins').checked||!MAP_CALIBRATIONS[atlasMap];}});
